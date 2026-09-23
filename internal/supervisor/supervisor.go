@@ -312,3 +312,107 @@ func PrintLog(id string, tailLines int) error {
 	_, err = io.Copy(os.Stdout, f)
 	return err
 }
+
+// FollowLog continuously streams logs from a running job until finished or context cancelled.
+func FollowLog(ctx context.Context, id string, out io.Writer) error {
+	j, err := GetJob(id)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(j.LogFile)
+	if err != nil {
+		return fmt.Errorf("could not open log file: %w", err)
+	}
+	defer f.Close()
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			n, err := f.Read(buf)
+			if n > 0 {
+				_, _ = out.Write(buf[:n])
+			}
+			if err == io.EOF || n == 0 {
+				// Refresh job status to see if it's finished
+				current, err := GetJob(id)
+				if err == nil && current.Status != StatusRunning {
+					// Read any remaining bytes
+					for {
+						n, err := f.Read(buf)
+						if n > 0 {
+							_, _ = out.Write(buf[:n])
+						}
+						if err != nil || n == 0 {
+							break
+						}
+					}
+					return nil
+				}
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// CleanJob removes worktrees and optionally deletes associated git branch.
+func CleanJob(id string, deleteBranch bool) error {
+	j, err := GetJob(id)
+	if err != nil {
+		return err
+	}
+
+	if j.Status == StatusRunning {
+		return fmt.Errorf("cannot clean job '%s' while it is still RUNNING (abort it first)", id)
+	}
+
+	if j.WorktreePath != "" {
+		_ = workspace.Cleanup(context.Background(), j.RepoRoot, j.WorktreePath, j.WorktreeBranch, deleteBranch)
+		j.WorktreePath = ""
+		if deleteBranch {
+			j.WorktreeBranch = ""
+		}
+		_ = SaveJob(j)
+	}
+
+	return nil
+}
+
+// PruneJobs removes finished jobs, deletes associated worktrees, and cleans log files.
+func PruneJobs(all bool) (int, error) {
+	jobs, err := ListJobs()
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, j := range jobs {
+		if j.Status == StatusRunning {
+			continue
+		}
+		// Clean worktree
+		if j.WorktreePath != "" {
+			_ = workspace.Cleanup(context.Background(), j.RepoRoot, j.WorktreePath, j.WorktreeBranch, true)
+		}
+		// Remove log file
+		if j.LogFile != "" {
+			_ = os.Remove(j.LogFile)
+		}
+		// Remove job json file
+		jobPath, err := jobFilePath(j.ID)
+		if err == nil {
+			_ = os.Remove(jobPath)
+		}
+		count++
+	}
+
+	return count, nil
+}
+

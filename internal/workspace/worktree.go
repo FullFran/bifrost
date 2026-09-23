@@ -59,9 +59,24 @@ func PrepareWorktree(ctx context.Context, taskID string, currentDir string) (*Wo
 	}, nil
 }
 
-// Cleanup removes the worktree filesystem allocation while preserving or deleting the branch.
-func Cleanup(ctx context.Context, repoRoot, worktreePath string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", worktreePath)
+// Cleanup removes the worktree and optionally deletes the git branch.
+func Cleanup(ctx context.Context, repoRoot, worktreePath, branch string, deleteBranch bool) error {
+	if worktreePath != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", worktreePath).Run()
+		_ = os.RemoveAll(worktreePath)
+	}
+
+	if deleteBranch && branch != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "branch", "-D", branch).Run()
+	}
+
+	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "prune").Run()
+	return nil
+}
+
+// Prune runs git worktree prune in the repository.
+func Prune(ctx context.Context, repoRoot string) error {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "prune")
 	return cmd.Run()
 }
 

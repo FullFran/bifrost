@@ -64,8 +64,8 @@ func AvailableRealms(ctx context.Context) []Realm {
 	return available
 }
 
-// ResolveRealm determines which realm to use based on preference and availability.
-func ResolveRealm(ctx context.Context, preference string) (Realm, error) {
+// ResolveRealm determines which realm to use based on preference and priority list.
+func ResolveRealm(ctx context.Context, preference string, priority []string) (Realm, error) {
 	if preference != "" && preference != "auto" {
 		r, ok := Get(preference)
 		if !ok {
@@ -77,7 +77,16 @@ func ResolveRealm(ctx context.Context, preference string) (Realm, error) {
 		return r, nil
 	}
 
-	// Auto mode: check realms in order
+	// Check realms according to configured priority first
+	for _, id := range priority {
+		if r, ok := Get(id); ok {
+			if avail, _ := r.IsAvailable(ctx); avail {
+				return r, nil
+			}
+		}
+	}
+
+	// Fallback to any available realm
 	for _, r := range All() {
 		if ok, _ := r.IsAvailable(ctx); ok {
 			return r, nil

@@ -118,14 +118,17 @@ bifrost list
 # Inspect detailed status
 bifrost status bf_20260923_150000_a1b2
 
-# View live execution logs
-bifrost logs bf_20260923_150000_a1b2
+# View live streaming execution logs
+bifrost logs -f bf_20260923_150000_a1b2
 
 # Inspect git diff created by the worktree
 bifrost diff bf_20260923_150000_a1b2
 
-# Merge the changes into your branch when satisfied
+# Merge changes (auto-cleans worktree if configured)
 bifrost merge bf_20260923_150000_a1b2
+
+# Or discard changes and delete the worktree
+bifrost clean bf_20260923_150000_a1b2
 ```
 
 ---
@@ -138,10 +141,13 @@ bifrost merge bf_20260923_150000_a1b2
 | `bifrost realms` | Checks status and binaries of all agent backends |
 | `bifrost list` | Lists all background and historical jobs |
 | `bifrost status <id>` | Shows detailed task state, execution duration, and PID |
-| `bifrost logs <id>` | Dumps output and error stream logs |
+| `bifrost logs [-f] <id>` | Dumps or streams (`-f`) output and error logs in real time |
 | `bifrost diff <id>` | Shows `git diff` produced by a worktree session |
 | `bifrost merge <id>` | Merges the isolated branch into your current branch |
+| `bifrost clean <id>` | Cleans worktree folder and deletes temporary branch |
+| `bifrost prune` | Removes all finished jobs, logs, and orphan worktrees |
 | `bifrost abort <id>` | Gracefully terminates a running background task |
+| `bifrost config` | Displays active declarative configuration (`~/.config/bifrost/config.json`) |
 
 ---
 
