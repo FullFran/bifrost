@@ -42,9 +42,9 @@ jobs:
         run: go test -race ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.64
+          version: v2.12
 
   goreleaser:
     runs-on: ubuntu-latest
