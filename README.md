@@ -4,7 +4,7 @@ A fast, compiled Go CLI to route, dispatch, and isolate AI coding agents (`agy`,
 
 Inspired by Google AX's declarative workspaces, but built for local development: instead of running heavy cluster infrastructure, it uses native Git worktrees so background agents can refactor and test code without touching your active editor or uncommitted files.
 
-[![CI](https://github.com/FullFran/bifrost/actions/workflows/ci.yml/badge.svg)](https://github.com/FullFran/bifrost/actions/workflows/ci.yml)
+[![CI](https://github.com/FullFran/bifrost/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FullFran/bifrost/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/FullFran/bifrost)](https://github.com/FullFran/bifrost/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
