@@ -1,130 +1,110 @@
-# 🌈 Bifrost
+# bifrost
 
-<div align="center">
+A fast, compiled Go CLI to route, dispatch, and isolate AI coding agents (`agy`, `opencode`, and upcoming backends) on your machine.
 
-```
-   ____  _  __               _   
-  / __ )(_)/ /_ _____ ____  / /_ 
- / __  / // __// ___// __ \/ __/ 
-/ /_/ / // /_ / /   / /_/ / /_   
-\____/_/ \__//_/    \____/\__/   
-```
+Inspired by Google AX's declarative workspaces, but built for local development: instead of running heavy cluster infrastructure, it uses native Git worktrees so background agents can refactor and test code without touching your active editor or uncommitted files.
 
-**The Universal AI Coding Agent Bridge & Worktree Orchestrator**  
-*Cross the realms of Google Antigravity, OpenCode, and beyond.*
-
+[![CI](https://github.com/FullFran/bifrost/actions/workflows/ci.yml/badge.svg)](https://github.com/FullFran/bifrost/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/FullFran/bifrost)](https://github.com/FullFran/bifrost/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://golang.org)
-[![Google Antigravity](https://img.shields.io/badge/Google-Antigravity%20(agy)-4285F4?logo=google&logoColor=white)](https://antigravity.google)
-[![OpenCode](https://img.shields.io/badge/OpenCode-Compatible-000000)](https://opencode.ai)
-
-</div>
 
 ---
 
-## ⚡ The Myth & Architecture
+## Why this exists
 
-In Norse mythology, **Bifröst** is the burning rainbow bridge connecting Asgard (the realm of the gods) with Midgard (the realm of mortals). 
-
-In modern software development, **Bifrost** is a fast, compiled Go CLI that bridges your workflow across different AI coding agent backends ("Realms"), inspired by **Google AX**'s declarative workspace sandboxing:
-
-| Realm | Agent Backend | Role & Superpower |
-|---|---|---|
-| 🛡️ **Asgard** | **Google Antigravity (`agy`)** | Flat-rate Google AI Pro quota, grounded search, and deep reasoning models. |
-| 🌿 **Midgard** | **OpenCode (`opencode`)** | Flexible local & open-source runner for offline or specialized models. |
-| ⚡ *Alfheim* *(coming soon)* | **Claude Code (`claude`)** | Surgical refactors and complex multi-file codebase operations. |
-| 🔥 *Muspelheim* *(coming soon)* | **Codex CLI (`codex`)** | Raw OpenAI reasoning engines. |
+1. **Context and token efficiency**: Running bulk refactoring or secondary reviews directly inside your primary interactive agent eats up the context window fast. Delegating self-contained tasks to an external CLI keeps the primary session lean.
+2. **Workspace safety**: Running autonomous agents in your current directory while you are coding leads to dirty git states and race conditions. Bifrost isolates each task into an ephemeral git worktree on its own branch.
+3. **Multi-agent flexibility**: Different tasks suit different tools. Google Antigravity (`agy`) gives you flat-rate Google AI Pro quota and grounded search; OpenCode (`opencode`) gives you local and open-source models. Bifrost provides a single interface with fallback routing across all of them.
 
 ---
 
-## 🚀 Key Features
+## How it works
 
-* **🛡️ Multi-Agent Routing & Fallback**: Run tasks using `auto` routing or target a specific realm (`-r agy`, `-r opencode`). If a realm is unavailable, Bifrost can intelligently fall back.
-* **🌐 Google AX-Inspired Workspace Isolation (`--worktree`)**: Never let an autonomous agent modify your working directory while you are editing. Bifrost can mount an ephemeral `git worktree` on a dedicated branch (`bifrost/<task-id>`), allowing the agent to test and refactor in total isolation.
-* **⚡ Background Asynchronous Jobs (`--bg`)**: Detach long-running refactors or audits. Bifrost manages PIDs, status checkpoints, and full stdout/stderr logging in `~/.cache/bifrost/`.
-* **🔍 Review & Merge Flow**: Review changes made in isolated worktrees using `bifrost diff <id>` and merge them into your branch with `bifrost merge <id>`.
-* **🏎️ Zero Dependencies**: Built in Go standard library. Compiles to a single lightweight binary with instantaneous startup.
+```text
+               ┌── [ -r agy ] ──────> Google Antigravity (Asgard)
+               │                      (AI Pro flat quota, web search)
+User / Script ─┼── [ -r opencode ] ──> OpenCode CLI (Midgard)
+               │                      (local models, open weights)
+               └── [ -w worktree ] ──> Ephemeral Git Worktree
+                                      (~/.cache/bifrost/worktrees/...)
+```
+
+- **Realms**: Drivers that know how to invoke each agent headless with proper permissions (`agy -p ... --dangerously-skip-permissions` or `opencode run --auto ...`).
+- **Workspace Isolation (`-w`)**: Checks your git root and creates a temporary worktree (`bifrost/<task-id>`). The agent works there in isolation. You can review the diff and merge when ready.
+- **Detached Execution (`-b`)**: Detaches the process cleanly, captures all stdout/stderr to disk, tracks PIDs, and lets you follow the logs live in another terminal.
 
 ---
 
-## 📦 Quickstart
+## Install
 
-### 1. Build and Install
+### Quick install (recommended)
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/FullFran/bifrost/main/scripts/install.sh | bash
+```
+
+### From source
+
+```bash
+git clone https://github.com/FullFran/bifrost.git
 cd bifrost
 make install
 ```
 
-This compiles the static binary and installs it to `~/.local/bin/bifrost`.
-
-### 2. Verify Your Realms (Doctor Check)
+Verify your setup:
 
 ```bash
 bifrost realms
 ```
 
-Output:
-```text
-🌈 Bifrost Realms & Doctor Check:
---------------------------------------------------------------------------------
-REALM      NAME                          STATUS          DETAILS
-agy        Asgard (Google Antigravity)   ✅ Operational   /home/.../.local/bin/agy
-opencode   Midgard (OpenCode)            ✅ Operational   /home/.../.opencode/bin/opencode
---------------------------------------------------------------------------------
-```
-
 ---
 
-## 💻 CLI Usage
+## Usage
 
-### A. Direct Execution
+### 1. Basic dispatch
 
 ```bash
-# Automatic routing across available realms
-bifrost "Audit src/auth.go for potential concurrency races"
+# Auto-route using configured priority (default: agy -> opencode)
+bifrost "Audit internal/router for concurrency issues"
 
-# Explicitly cross to Asgard (Google Antigravity)
-bifrost -r agy "Write unit tests for the router package"
-
-# Explicitly cross to Midgard (OpenCode)
-bifrost -r opencode "Refactor this utility function"
+# Target a specific agent
+bifrost -r agy "Write unit tests for the supervisor package"
+bifrost -r opencode "Refactor this helper function"
 ```
 
-### B. Workspace Isolation (Git Worktree)
+### 2. Isolated execution (Git Worktree)
 
-To prevent the agent from touching your active uncommitted code:
+To prevent the agent from touching your current workspace or uncommitted changes:
 
 ```bash
-bifrost -w "Refactor the database layer to use sqlx"
+bifrost -w "Refactor database migrations to support postgres 16"
 ```
 
-Bifrost will:
-1. Detect your git repository root.
-2. Create an isolated worktree at `~/.cache/bifrost/worktrees/bf_...` on branch `bifrost/bf_...`.
-3. Run the agent strictly inside that worktree.
-4. Leave your current editor and files 100% clean.
-
-### C. Background Jobs & Supervision
+When it finishes, review what changed:
 
 ```bash
-# Launch a background task inside an isolated worktree
+bifrost diff <task-id>
+bifrost merge <task-id>
+```
+
+### 3. Background jobs and live streaming
+
+For long tasks (test generation, deep audits, large refactors):
+
+```bash
+# Launch detached in background with worktree isolation
 bifrost -w -b "Generate full test coverage for internal/supervisor"
 # => 🚀 Agent dispatched in background! Task ID: bf_20260923_150000_a1b2 (PID: 45210)
 
-# Check all active and finished jobs
+# Check active and completed tasks
 bifrost list
-
-# Inspect detailed status
 bifrost status bf_20260923_150000_a1b2
 
-# View live streaming execution logs
+# Stream output in real time from another terminal
 bifrost logs -f bf_20260923_150000_a1b2
 
-# Inspect git diff created by the worktree
+# Review and merge
 bifrost diff bf_20260923_150000_a1b2
-
-# Merge changes (auto-cleans worktree if configured)
 bifrost merge bf_20260923_150000_a1b2
 
 # Or discard changes and delete the worktree
@@ -133,24 +113,57 @@ bifrost clean bf_20260923_150000_a1b2
 
 ---
 
-## 🛠️ Subcommands Reference
+## Configuration
 
-| Subcommand | Description |
-|---|---|
-| `bifrost "<prompt>"` | Dispatches a task to an agent realm |
-| `bifrost realms` | Checks status and binaries of all agent backends |
-| `bifrost list` | Lists all background and historical jobs |
-| `bifrost status <id>` | Shows detailed task state, execution duration, and PID |
-| `bifrost logs [-f] <id>` | Dumps or streams (`-f`) output and error logs in real time |
-| `bifrost diff <id>` | Shows `git diff` produced by a worktree session |
-| `bifrost merge <id>` | Merges the isolated branch into your current branch |
-| `bifrost clean <id>` | Cleans worktree folder and deletes temporary branch |
-| `bifrost prune` | Removes all finished jobs, logs, and orphan worktrees |
-| `bifrost abort <id>` | Gracefully terminates a running background task |
-| `bifrost config` | Displays active declarative configuration (`~/.config/bifrost/config.json`) |
+Settings live in `~/.config/bifrost/config.json`:
+
+```json
+{
+  "default_realm": "auto",
+  "priority": [
+    "agy",
+    "opencode"
+  ],
+  "fallback_on_error": true,
+  "worktree": {
+    "auto_cleanup_on_merge": true
+  },
+  "realms": {
+    "agy": {
+      "default_model": "gemini-3.8-flash-high",
+      "default_effort": "medium"
+    },
+    "opencode": {}
+  }
+}
+```
+
+Check current active config at any time:
+
+```bash
+bifrost config
+```
 
 ---
 
-## 📜 License
+## Command Reference
 
-MIT License. Designed and crafted with pair programming.
+| Command | Description |
+|---|---|
+| `bifrost "<prompt>"` | Dispatches a task to an agent realm |
+| `bifrost realms` | Doctor check: probes installed binaries and status |
+| `bifrost list` | Lists active and historical jobs |
+| `bifrost status <id>` | Shows detailed task state, PID, and duration |
+| `bifrost logs [-f] <id>` | Prints or streams (`-f`) execution logs |
+| `bifrost diff <id>` | Shows git diff produced by a worktree task |
+| `bifrost merge <id>` | Merges the isolated branch into your active branch |
+| `bifrost clean <id>` | Removes worktree directory and temporary branch |
+| `bifrost prune` | Cleans all finished jobs, logs, and orphan worktrees |
+| `bifrost abort <id>` | Gracefully terminates a running background task |
+| `bifrost config` | Shows current declarative configuration |
+
+---
+
+## License
+
+MIT
