@@ -1,0 +1,48 @@
+name: release
+
+# Publish a GitHub Release whenever a version tag (vX.Y.Z) is pushed.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify version matches tag
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          want="${want%%-*}"
+          got="$(go run ./cmd/bifrost version | awk '{print $2}' | sed 's/^v//')"
+          if [ "$want" != "$got" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match version in source tree (${got})."
+            echo "Bump defaultVersion in internal/buildinfo/buildinfo.go, commit, then retag."
+            exit 1
+          fi
+          echo "version ${got} matches tag ${GITHUB_REF_NAME}"
+
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

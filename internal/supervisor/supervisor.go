@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"syscall"
 	"time"
 
 	"github.com/FullFran/bifrost/internal/realm"
@@ -101,8 +100,7 @@ func GetJob(id string) (*Job, error) {
 
 	// Dynamic check if process is still alive when status is RUNNING
 	if j.Status == StatusRunning && j.PID > 0 {
-		process, err := os.FindProcess(j.PID)
-		if err != nil || process.Signal(syscall.Signal(0)) != nil {
+		if !isProcessAlive(j.PID) {
 			// Process died without updating status
 			j.Status = StatusFailed
 			j.Error = "process exited unexpectedly"
@@ -152,12 +150,7 @@ func AbortJob(id string) error {
 		return fmt.Errorf("job is already in state %s", j.Status)
 	}
 
-	if j.PID > 0 {
-		// Kill process group
-		_ = syscall.Kill(-j.PID, syscall.SIGTERM)
-		time.Sleep(200 * time.Millisecond)
-		_ = syscall.Kill(-j.PID, syscall.SIGKILL)
-	}
+	killProcessGroup(j.PID)
 
 	j.Status = StatusAborted
 	now := time.Now()
@@ -214,9 +207,7 @@ func SpawnBackground(task realm.Task, r realm.Realm, targetDir string, wt *works
 
 	// Worker process: bifrost __worker <job-id>
 	workerCmd := exec.Command(selfBin, "__worker", task.ID)
-	workerCmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Detach from controlling terminal
-	}
+	setSysProcAttr(workerCmd)
 
 	if err := workerCmd.Start(); err != nil {
 		job.Status = StatusFailed
@@ -247,7 +238,7 @@ func ExecuteWorker(jobID string) error {
 		_ = SaveJob(j)
 		return err
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	r, ok := realm.Get(j.Realm)
 	if !ok {
@@ -307,7 +298,7 @@ func PrintLog(id string, tailLines int) error {
 	if err != nil {
 		return fmt.Errorf("could not open log file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = io.Copy(os.Stdout, f)
 	return err
@@ -324,7 +315,7 @@ func FollowLog(ctx context.Context, id string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("could not open log file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	buf := make([]byte, 4096)
 	for {
@@ -415,4 +406,3 @@ func PruneJobs(all bool) (int, error) {
 
 	return count, nil
 }
-

@@ -15,13 +15,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/FullFran/bifrost/internal/buildinfo"
 	"github.com/FullFran/bifrost/internal/config"
 	"github.com/FullFran/bifrost/internal/realm"
 	"github.com/FullFran/bifrost/internal/supervisor"
 	"github.com/FullFran/bifrost/internal/workspace"
 )
-
-const version = "0.2.0"
 
 func generateTaskID() string {
 	bytes := make([]byte, 4)
@@ -74,7 +73,7 @@ EXAMPLES:
   bifrost diff bf_20260923_120000_abcd
   bifrost merge bf_20260923_120000_abcd
   bifrost clean bf_20260923_120000_abcd
-`, version)
+`, buildinfo.Version())
 }
 
 func main() {
@@ -107,7 +106,7 @@ func main() {
 	// Subcommands
 	switch firstArg {
 	case "version", "--version", "-v":
-		fmt.Printf("Bifrost v%s\n", version)
+		fmt.Println(buildinfo.Full())
 		return
 	case "help", "--help", "-h":
 		printHelp()
@@ -183,7 +182,7 @@ func cmdDoctor() {
 	fmt.Println("🌈 Bifrost Realms & Doctor Check:")
 	fmt.Println("--------------------------------------------------------------------------------")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "REALM\tNAME\tSTATUS\tDETAILS")
+	_, _ = fmt.Fprintln(w, "REALM\tNAME\tSTATUS\tDETAILS")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -194,9 +193,9 @@ func cmdDoctor() {
 		if avail {
 			status = "✅ Operational"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID(), r.Name(), status, details)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID(), r.Name(), status, details)
 	}
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println("--------------------------------------------------------------------------------")
 }
 
@@ -212,7 +211,7 @@ func cmdList() {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "JOB ID\tREALM\tSTATUS\tCREATED\tWORKTREE\tPROMPT")
+	_, _ = fmt.Fprintln(w, "JOB ID\tREALM\tSTATUS\tCREATED\tWORKTREE\tPROMPT")
 	for _, j := range jobs {
 		wt := "-"
 		if j.WorktreeBranch != "" {
@@ -223,9 +222,9 @@ func cmdList() {
 			promptPreview = promptPreview[:32] + "..."
 		}
 		created := j.CreatedAt.Format("01-02 15:04")
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", j.ID, j.Realm, j.Status, created, wt, promptPreview)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", j.ID, j.Realm, j.Status, created, wt, promptPreview)
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func cmdStatus(jobID string) {

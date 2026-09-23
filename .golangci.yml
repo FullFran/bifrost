@@ -1,0 +1,6 @@
+version: "2"
+
+# Default linters (govet, ineffassign, staticcheck, unused, etc.)
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -12,11 +12,11 @@ import (
 
 // WorktreeSession represents an isolated git worktree environment inspired by AX Workspace.
 type WorktreeSession struct {
-	TaskID    string
-	RepoRoot  string
-	Branch    string
-	Path      string
-	IsActive  bool
+	TaskID   string
+	RepoRoot string
+	Branch   string
+	Path     string
+	IsActive bool
 }
 
 // PrepareWorktree creates a dedicated ephemeral git worktree for the task.
