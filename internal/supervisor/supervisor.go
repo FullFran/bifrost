@@ -1,0 +1,314 @@
+package supervisor
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"syscall"
+	"time"
+
+	"github.com/FullFran/bifrost/internal/realm"
+	"github.com/FullFran/bifrost/internal/workspace"
+)
+
+type JobStatus string
+
+const (
+	StatusRunning   JobStatus = "RUNNING"
+	StatusCompleted JobStatus = "COMPLETED"
+	StatusFailed    JobStatus = "FAILED"
+	StatusAborted   JobStatus = "ABORTED"
+)
+
+type Job struct {
+	ID             string     `json:"id"`
+	Realm          string     `json:"realm"`
+	Prompt         string     `json:"prompt"`
+	WorkDir        string     `json:"work_dir"`
+	WorktreeBranch string     `json:"worktree_branch,omitempty"`
+	WorktreePath   string     `json:"worktree_path,omitempty"`
+	RepoRoot       string     `json:"repo_root,omitempty"`
+	PID            int        `json:"pid"`
+	Status         JobStatus  `json:"status"`
+	ExitCode       int        `json:"exit_code"`
+	CreatedAt      time.Time  `json:"created_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	LogFile        string     `json:"log_file"`
+	Error          string     `json:"error,omitempty"`
+}
+
+func CacheDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".cache", "bifrost")
+	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0755); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func jobFilePath(id string) (string, error) {
+	cache, err := CacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "jobs", fmt.Sprintf("%s.json", id)), nil
+}
+
+func logFilePath(id string) (string, error) {
+	cache, err := CacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "logs", fmt.Sprintf("%s.log", id)), nil
+}
+
+func SaveJob(j *Job) error {
+	p, err := jobFilePath(j.ID)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(j, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0644)
+}
+
+func GetJob(id string) (*Job, error) {
+	p, err := jobFilePath(id)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("job '%s' not found: %w", id, err)
+	}
+	var j Job
+	if err := json.Unmarshal(data, &j); err != nil {
+		return nil, err
+	}
+
+	// Dynamic check if process is still alive when status is RUNNING
+	if j.Status == StatusRunning && j.PID > 0 {
+		process, err := os.FindProcess(j.PID)
+		if err != nil || process.Signal(syscall.Signal(0)) != nil {
+			// Process died without updating status
+			j.Status = StatusFailed
+			j.Error = "process exited unexpectedly"
+			now := time.Now()
+			j.FinishedAt = &now
+			_ = SaveJob(&j)
+		}
+	}
+
+	return &j, nil
+}
+
+func ListJobs() ([]*Job, error) {
+	cache, err := CacheDir()
+	if err != nil {
+		return nil, err
+	}
+	files, err := os.ReadDir(filepath.Join(cache, "jobs"))
+	if err != nil {
+		return nil, err
+	}
+
+	var jobs []*Job
+	for _, f := range files {
+		if filepath.Ext(f.Name()) == ".json" {
+			id := f.Name()[:len(f.Name())-5]
+			j, err := GetJob(id)
+			if err == nil {
+				jobs = append(jobs, j)
+			}
+		}
+	}
+
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
+	})
+
+	return jobs, nil
+}
+
+func AbortJob(id string) error {
+	j, err := GetJob(id)
+	if err != nil {
+		return err
+	}
+	if j.Status != StatusRunning {
+		return fmt.Errorf("job is already in state %s", j.Status)
+	}
+
+	if j.PID > 0 {
+		// Kill process group
+		_ = syscall.Kill(-j.PID, syscall.SIGTERM)
+		time.Sleep(200 * time.Millisecond)
+		_ = syscall.Kill(-j.PID, syscall.SIGKILL)
+	}
+
+	j.Status = StatusAborted
+	now := time.Now()
+	j.FinishedAt = &now
+	j.Error = "aborted by user"
+	return SaveJob(j)
+}
+
+// RunForeground executes the agent synchronously in the console.
+func RunForeground(ctx context.Context, task realm.Task, r realm.Realm, targetDir string, wt *workspace.WorktreeSession) error {
+	cmd, err := r.BuildCommand(ctx, task, targetDir)
+	if err != nil {
+		return err
+	}
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
+}
+
+// SpawnBackground creates a detached background worker process.
+func SpawnBackground(task realm.Task, r realm.Realm, targetDir string, wt *workspace.WorktreeSession) (*Job, error) {
+	logPath, err := logFilePath(task.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	selfBin, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to locate bifrost executable: %w", err)
+	}
+
+	job := &Job{
+		ID:        task.ID,
+		Realm:     r.ID(),
+		Prompt:    task.Prompt,
+		WorkDir:   targetDir,
+		Status:    StatusRunning,
+		CreatedAt: time.Now(),
+		LogFile:   logPath,
+	}
+
+	if wt != nil {
+		job.WorktreeBranch = wt.Branch
+		job.WorktreePath = wt.Path
+		job.RepoRoot = wt.RepoRoot
+	}
+
+	if err := SaveJob(job); err != nil {
+		return nil, err
+	}
+
+	// Worker process: bifrost __worker <job-id>
+	workerCmd := exec.Command(selfBin, "__worker", task.ID)
+	workerCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Detach from controlling terminal
+	}
+
+	if err := workerCmd.Start(); err != nil {
+		job.Status = StatusFailed
+		job.Error = err.Error()
+		_ = SaveJob(job)
+		return nil, fmt.Errorf("failed to start worker: %w", err)
+	}
+
+	job.PID = workerCmd.Process.Pid
+	if err := SaveJob(job); err != nil {
+		return nil, err
+	}
+
+	return job, nil
+}
+
+// ExecuteWorker is called by the internal '__worker' hidden subcommand.
+func ExecuteWorker(jobID string) error {
+	j, err := GetJob(jobID)
+	if err != nil {
+		return err
+	}
+
+	logFile, err := os.OpenFile(j.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		j.Status = StatusFailed
+		j.Error = fmt.Sprintf("failed to open log file: %v", err)
+		_ = SaveJob(j)
+		return err
+	}
+	defer logFile.Close()
+
+	r, ok := realm.Get(j.Realm)
+	if !ok {
+		j.Status = StatusFailed
+		j.Error = fmt.Sprintf("realm %s not found", j.Realm)
+		_ = SaveJob(j)
+		return fmt.Errorf("realm not found")
+	}
+
+	task := realm.Task{
+		ID:      j.ID,
+		Prompt:  j.Prompt,
+		WorkDir: j.WorkDir,
+	}
+
+	ctx := context.Background()
+	cmd, err := r.BuildCommand(ctx, task, j.WorkDir)
+	if err != nil {
+		j.Status = StatusFailed
+		j.Error = err.Error()
+		_ = SaveJob(j)
+		return err
+	}
+
+	// Stream stdout & stderr to logFile
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	runErr := cmd.Run()
+	now := time.Now()
+	j.FinishedAt = &now
+
+	if runErr != nil {
+		j.Status = StatusFailed
+		j.Error = runErr.Error()
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			j.ExitCode = exitErr.ExitCode()
+		} else {
+			j.ExitCode = 1
+		}
+	} else {
+		j.Status = StatusCompleted
+		j.ExitCode = 0
+	}
+
+	return SaveJob(j)
+}
+
+// PrintLog displays the log of a given job.
+func PrintLog(id string, tailLines int) error {
+	j, err := GetJob(id)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(j.LogFile)
+	if err != nil {
+		return fmt.Errorf("could not open log file: %w", err)
+	}
+	defer f.Close()
+
+	_, err = io.Copy(os.Stdout, f)
+	return err
+}
