@@ -28,6 +28,11 @@ type Realm interface {
 	BuildCommand(ctx context.Context, task Task, targetDir string) (*exec.Cmd, error)
 }
 
+// ModelLister is implemented by realms that can list their available models.
+type ModelLister interface {
+	ModelsCommand(ctx context.Context) (*exec.Cmd, error)
+}
+
 var registry = make(map[string]Realm)
 var order []string
 

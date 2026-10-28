@@ -76,3 +76,12 @@ func (m *MidgardOpenCode) BuildCommand(ctx context.Context, task Task, targetDir
 	cmd.Dir = targetDir
 	return cmd, nil
 }
+
+// ModelsCommand lists the models opencode can use.
+func (m *MidgardOpenCode) ModelsCommand(ctx context.Context) (*exec.Cmd, error) {
+	bin := m.findBinary()
+	if bin == "" {
+		return nil, fmt.Errorf("opencode binary not found")
+	}
+	return exec.CommandContext(ctx, bin, "models"), nil
+}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -31,15 +32,11 @@ func DefaultConfig() *Config {
 		Worktree: WorktreeConfig{
 			AutoCleanupOnMerge: true,
 		},
+		// Empty model/effort means "use the agent's own default", which keeps
+		// tracking the agent as it ships new models.
 		Realms: map[string]RealmConfig{
-			"agy": {
-				DefaultEffort: "medium",
-				DefaultModel:  "gemini-3.8-flash-high",
-			},
-			"opencode": {
-				DefaultEffort: "",
-				DefaultModel:  "",
-			},
+			"agy":      {},
+			"opencode": {},
 		},
 	}
 }
@@ -94,4 +91,23 @@ func Save(cfg *Config) error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+// SetRealmOption sets a per-realm default ("model" or "effort").
+// An empty value unsets it so the agent's own default applies.
+func (c *Config) SetRealmOption(realmID, key, value string) error {
+	if c.Realms == nil {
+		c.Realms = map[string]RealmConfig{}
+	}
+	rc := c.Realms[realmID]
+	switch key {
+	case "model":
+		rc.DefaultModel = value
+	case "effort":
+		rc.DefaultEffort = value
+	default:
+		return fmt.Errorf("unknown realm option %q (expected model or effort)", key)
+	}
+	c.Realms[realmID] = rc
+	return nil
 }

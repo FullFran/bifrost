@@ -129,14 +129,22 @@ Settings live in `~/.config/bifrost/config.json`:
     "auto_cleanup_on_merge": true
   },
   "realms": {
-    "agy": {
-      "default_model": "gemini-3.8-flash-high",
-      "default_effort": "medium"
-    },
+    "agy": {},
     "opencode": {}
   }
 }
 ```
+
+Realms carry no model or effort by default, so each agent uses its own current default and keeps tracking it as the agent ships new models. Pin one only when you want to:
+
+```bash
+bifrost models agy                         # see what agy can run
+bifrost config set agy model gemini-4-argon-high
+bifrost config set agy effort low
+bifrost config unset agy model             # back to agy's own default
+```
+
+agy model IDs carry the effort as a suffix (`gemini-3.8-flash-high`). When you also pass an effort (`-e low` or `default_effort`), Bifrost swaps that suffix (`gemini-3.8-flash-low`) instead of sending both, which agy would reject.
 
 Check current active config at any time:
 

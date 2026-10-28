@@ -6,7 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
+
+// agyEffortSuffixes are the effort levels agy encodes in model IDs
+// (e.g. gemini-3.8-flash-high). agy rejects --effort when it disagrees with them.
+var agyEffortSuffixes = []string{"low", "medium", "high", "xhigh", "max"}
 
 type AsgardAgy struct{}
 
@@ -57,14 +62,47 @@ func (a *AsgardAgy) BuildCommand(ctx context.Context, task Task, targetDir strin
 		"-p", task.Prompt,
 	}
 
-	if task.Model != "" {
-		args = append(args, "--model", task.Model)
-	}
-	if task.Effort != "" {
-		args = append(args, "--effort", task.Effort)
-	}
+	args = append(args, agyModelArgs(task.Model, task.Effort)...)
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = targetDir
 	return cmd, nil
+}
+
+// agyModelArgs builds the --model/--effort flags. When the model ID already
+// carries an effort suffix, the requested effort replaces that suffix instead
+// of being passed separately, which agy would reject as a conflict.
+func agyModelArgs(model, effort string) []string {
+	var args []string
+	if model != "" {
+		if base, ok := trimEffortSuffix(model); ok && effort != "" {
+			return []string{"--model", base + "-" + effort}
+		}
+		args = append(args, "--model", model)
+		if _, ok := trimEffortSuffix(model); ok {
+			return args
+		}
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	return args
+}
+
+func trimEffortSuffix(model string) (string, bool) {
+	for _, e := range agyEffortSuffixes {
+		if base, ok := strings.CutSuffix(model, "-"+e); ok && base != "" {
+			return base, true
+		}
+	}
+	return model, false
+}
+
+// ModelsCommand lists the models agy can use.
+func (a *AsgardAgy) ModelsCommand(ctx context.Context) (*exec.Cmd, error) {
+	bin := a.findBinary()
+	if bin == "" {
+		return nil, fmt.Errorf("agy binary not found")
+	}
+	return exec.CommandContext(ctx, bin, "models"), nil
 }

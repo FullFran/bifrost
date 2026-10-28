@@ -46,6 +46,11 @@ SUBCOMMANDS:
   clean <JOB_ID>       Clean worktree directory and temporary branches
   prune                Remove all finished jobs, orphan worktrees, and logs
   config               Display current declarative configuration
+  config set <REALM> <model|effort> <VALUE>
+                       Set a per-realm default (e.g. config set agy model gemini-4-argon-high)
+  config unset <REALM> <model|effort>
+                       Remove a default so the agent's own default applies
+  models [REALM]       List the models each realm can use
   realms               Inspect available agent realms and doctor check
   version              Show Bifrost version
 
@@ -115,7 +120,10 @@ func main() {
 		cmdDoctor()
 		return
 	case "config":
-		cmdConfig(cfg)
+		cmdConfig(os.Args[2:], cfg)
+		return
+	case "models":
+		cmdModels(os.Args[2:])
 		return
 	case "list", "ps":
 		cmdList()
@@ -171,11 +179,81 @@ func main() {
 	cmdDispatch(os.Args[1:], cfg)
 }
 
-func cmdConfig(cfg *config.Config) {
+func cmdConfig(args []string, cfg *config.Config) {
+	if len(args) > 0 {
+		var realmID, key, value string
+		switch {
+		case args[0] == "set" && len(args) == 4:
+			realmID, key, value = args[1], args[2], args[3]
+		case args[0] == "unset" && len(args) == 3:
+			realmID, key = args[1], args[2]
+		default:
+			fmt.Fprintln(os.Stderr, "Usage: bifrost config set <REALM> <model|effort> <VALUE>")
+			fmt.Fprintln(os.Stderr, "       bifrost config unset <REALM> <model|effort>")
+			os.Exit(1)
+		}
+		if _, ok := realm.Get(realmID); !ok {
+			fmt.Fprintf(os.Stderr, "Error: unknown realm %q\n", realmID)
+			os.Exit(1)
+		}
+		if err := cfg.SetRealmOption(realmID, key, value); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to save config: %v\n", err)
+			os.Exit(1)
+		}
+		if value == "" {
+			fmt.Printf("✅ %s %s unset (using the agent's own default)\n", realmID, key)
+		} else {
+			fmt.Printf("✅ %s %s = %s\n", realmID, key, value)
+		}
+		return
+	}
+
 	p, _ := config.ConfigPath()
 	fmt.Printf("🌈 Bifrost Declarative Config (%s):\n", p)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	fmt.Println(string(data))
+}
+
+func cmdModels(args []string) {
+	ctx := context.Background()
+	var targets []realm.Realm
+	if len(args) > 0 {
+		r, ok := realm.Get(args[0])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Error: unknown realm %q\n", args[0])
+			os.Exit(1)
+		}
+		targets = []realm.Realm{r}
+	} else {
+		targets = realm.AvailableRealms(ctx)
+	}
+
+	failed := false
+	for _, r := range targets {
+		lister, ok := r.(realm.ModelLister)
+		if !ok {
+			continue
+		}
+		fmt.Printf("🌈 %s (%s):\n", r.Name(), r.ID())
+		cmd, err := lister.ModelsCommand(ctx)
+		if err == nil {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			err = cmd.Run()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing %s models: %v\n", r.ID(), err)
+			failed = true
+		}
+		fmt.Println()
+	}
+	if failed {
+		os.Exit(1)
+	}
 }
 
 func cmdDoctor() {
