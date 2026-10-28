@@ -28,3 +28,24 @@ func TestAgyArgsModelAndEffort(t *testing.T) {
 		})
 	}
 }
+
+func TestAgyArgsStreamJSON(t *testing.T) {
+	got := agyArgs(Task{Prompt: "do it", StreamJSON: true})
+	want := []string{"--dangerously-skip-permissions", "-p", "do it", "--output-format", "stream-json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("agyArgs = %v, want %v", got, want)
+	}
+	plain := agyArgs(Task{Prompt: "do it", Model: "gemini-3.8-flash-high", Effort: "low"})
+	wantPlain := []string{"--dangerously-skip-permissions", "-p", "do it", "--model", "gemini-3.8-flash-low"}
+	if !reflect.DeepEqual(plain, wantPlain) {
+		t.Errorf("agyArgs = %v, want %v", plain, wantPlain)
+	}
+}
+
+func TestOpenCodeArgsStreamJSON(t *testing.T) {
+	got := openCodeArgs(Task{Prompt: "do it", StreamJSON: true})
+	want := []string{"run", "--auto", "--format", "json", "do it"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("openCodeArgs = %v, want %v", got, want)
+	}
+}

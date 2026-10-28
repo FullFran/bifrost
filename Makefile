@@ -24,8 +24,7 @@ build:
 install: build
 	@echo "📦 Installing to $(PREFIX)..."
 	@mkdir -p $(PREFIX)
-	@cp bin/$(BINARY_NAME) $(PREFIX)/$(BINARY_NAME)
-	@chmod +x $(PREFIX)/$(BINARY_NAME)
+	@install -m 0755 bin/$(BINARY_NAME) $(PREFIX)/$(BINARY_NAME)
 	@echo "✅ Installed $(PREFIX)/$(BINARY_NAME)"
 	@$(PREFIX)/$(BINARY_NAME) realms
 

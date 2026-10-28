@@ -16,6 +16,9 @@ type Task struct {
 	Background bool
 	Model      string
 	Effort     string
+	// StreamJSON asks the agent for its machine-readable event stream
+	// (one JSON event per line) instead of formatted text.
+	StreamJSON bool
 	Timeout    time.Duration
 }
 

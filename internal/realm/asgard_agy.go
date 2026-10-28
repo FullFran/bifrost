@@ -57,16 +57,20 @@ func (a *AsgardAgy) BuildCommand(ctx context.Context, task Task, targetDir strin
 		return nil, fmt.Errorf("agy binary not found")
 	}
 
+	cmd := exec.CommandContext(ctx, bin, agyArgs(task)...)
+	cmd.Dir = targetDir
+	return cmd, nil
+}
+
+func agyArgs(task Task) []string {
 	args := []string{
 		"--dangerously-skip-permissions",
 		"-p", task.Prompt,
 	}
-
-	args = append(args, agyModelArgs(task.Model, task.Effort)...)
-
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = targetDir
-	return cmd, nil
+	if task.StreamJSON {
+		args = append(args, "--output-format", "stream-json")
+	}
+	return append(args, agyModelArgs(task.Model, task.Effort)...)
 }
 
 // agyModelArgs builds the --model/--effort flags. When the model ID already

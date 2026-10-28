@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -62,6 +63,7 @@ OPTIONS:
   -m, --model <MODEL>  Specify LLM model override
   -e, --effort <VAL>   Reasoning effort level (low, medium, high)
   -d, --dir <DIR>      Base directory (default: current working directory)
+      --json           Stream the agent's JSON events on stdout (Bifrost messages go to stderr)
   -h, --help           Show this help message
 
 EXAMPLES:
@@ -462,6 +464,8 @@ func cmdDispatch(args []string, cfg *config.Config) {
 	effortFlag := fs.String("effort", "", "Reasoning effort (low, medium, high)")
 	fs.StringVar(effortFlag, "e", "", "Short alias for --effort")
 
+	jsonFlag := fs.Bool("json", false, "Stream the agent's JSON events on stdout; Bifrost messages go to stderr")
+
 	dirFlag := fs.String("dir", "", "Working directory")
 	fs.StringVar(dirFlag, "d", "", "Short alias for --dir")
 
@@ -479,7 +483,16 @@ func cmdDispatch(args []string, cfg *config.Config) {
 		currentDir, _ = filepath.Abs(*dirFlag)
 	}
 
-	ctx := context.Background()
+	// Status messages go to stderr in --json mode so stdout stays a clean event stream.
+	var out io.Writer = os.Stdout
+	if *jsonFlag {
+		out = os.Stderr
+	}
+
+	// Cancel the agent when Bifrost is interrupted or terminated, so a killed
+	// foreground dispatch never leaves the agent running as an orphan.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// 1. Resolve Realm using priority list from config
 	targetRealm, err := realm.ResolveRealm(ctx, *realmFlag, cfg.Priority)
@@ -506,7 +519,7 @@ func cmdDispatch(args []string, cfg *config.Config) {
 
 	// 2. Prepare Workspace (Git Worktree isolation)
 	if *worktreeFlag {
-		fmt.Printf("🌐 Preparing isolated Git Worktree for task '%s'...\n", taskID)
+		fmt.Fprintf(out, "🌐 Preparing isolated Git Worktree for task '%s'...\n", taskID)
 		var err error
 		wtSession, err = workspace.PrepareWorktree(ctx, taskID, currentDir)
 		if err != nil {
@@ -514,7 +527,7 @@ func cmdDispatch(args []string, cfg *config.Config) {
 			os.Exit(1)
 		}
 		targetDir = wtSession.Path
-		fmt.Printf("🌿 Worktree mounted: %s (branch: %s)\n", wtSession.Path, wtSession.Branch)
+		fmt.Fprintf(out, "🌿 Worktree mounted: %s (branch: %s)\n", wtSession.Path, wtSession.Branch)
 	}
 
 	task := realm.Task{
@@ -525,9 +538,10 @@ func cmdDispatch(args []string, cfg *config.Config) {
 		Background: *bgFlag,
 		Model:      finalModel,
 		Effort:     finalEffort,
+		StreamJSON: *jsonFlag,
 	}
 
-	fmt.Printf("⚡ Bifrost crossing to [%s] with task %s\n", targetRealm.Name(), taskID)
+	fmt.Fprintf(out, "⚡ Bifrost crossing to [%s] with task %s\n", targetRealm.Name(), taskID)
 
 	// 3. Execution
 	if *bgFlag {
@@ -536,14 +550,14 @@ func cmdDispatch(args []string, cfg *config.Config) {
 			fmt.Fprintf(os.Stderr, "Background spawn error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("🚀 Agent dispatched in background!\n")
-		fmt.Printf("   Task ID: %s (PID: %d)\n", job.ID, job.PID)
-		fmt.Printf("   Logs:    bifrost logs -f %s\n", job.ID)
-		fmt.Printf("   Status:  bifrost status %s\n", job.ID)
+		fmt.Fprintf(out, "🚀 Agent dispatched in background!\n")
+		fmt.Fprintf(out, "   Task ID: %s (PID: %d)\n", job.ID, job.PID)
+		fmt.Fprintf(out, "   Logs:    bifrost logs -f %s\n", job.ID)
+		fmt.Fprintf(out, "   Status:  bifrost status %s\n", job.ID)
 		if *worktreeFlag {
-			fmt.Printf("   Review:  bifrost diff %s\n", job.ID)
-			fmt.Printf("   Merge:   bifrost merge %s\n", job.ID)
-			fmt.Printf("   Clean:   bifrost clean %s\n", job.ID)
+			fmt.Fprintf(out, "   Review:  bifrost diff %s\n", job.ID)
+			fmt.Fprintf(out, "   Merge:   bifrost merge %s\n", job.ID)
+			fmt.Fprintf(out, "   Clean:   bifrost clean %s\n", job.ID)
 		}
 		return
 	}
@@ -558,13 +572,13 @@ func cmdDispatch(args []string, cfg *config.Config) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n✨ Task completed successfully in %s.\n", duration)
+	fmt.Fprintf(out, "\n✨ Task completed successfully in %s.\n", duration)
 	if *worktreeFlag {
-		fmt.Println("--------------------------------------------------------------------------------")
-		fmt.Printf("Branch '%s' contains your isolated changes.\n", wtSession.Branch)
-		fmt.Printf("To inspect changes: bifrost diff %s\n", taskID)
-		fmt.Printf("To merge changes:   bifrost merge %s\n", taskID)
-		fmt.Printf("To discard changes: bifrost clean %s\n", taskID)
-		fmt.Println("--------------------------------------------------------------------------------")
+		fmt.Fprintln(out, "--------------------------------------------------------------------------------")
+		fmt.Fprintf(out, "Branch '%s' contains your isolated changes.\n", wtSession.Branch)
+		fmt.Fprintf(out, "To inspect changes: bifrost diff %s\n", taskID)
+		fmt.Fprintf(out, "To merge changes:   bifrost merge %s\n", taskID)
+		fmt.Fprintf(out, "To discard changes: bifrost clean %s\n", taskID)
+		fmt.Fprintln(out, "--------------------------------------------------------------------------------")
 	}
 }

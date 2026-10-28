@@ -57,24 +57,27 @@ func (m *MidgardOpenCode) BuildCommand(ctx context.Context, task Task, targetDir
 		return nil, fmt.Errorf("opencode binary not found")
 	}
 
+	cmd := exec.CommandContext(ctx, bin, openCodeArgs(task)...)
+	cmd.Dir = targetDir
+	return cmd, nil
+}
+
+func openCodeArgs(task Task) []string {
 	args := []string{
 		"run",
 		"--auto",
 	}
-
+	if task.StreamJSON {
+		args = append(args, "--format", "json")
+	}
 	if task.Model != "" {
 		args = append(args, "--model", task.Model)
 	}
 	if task.Effort != "" {
 		args = append(args, "--variant", task.Effort)
 	}
-
 	// Message argument
-	args = append(args, task.Prompt)
-
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = targetDir
-	return cmd, nil
+	return append(args, task.Prompt)
 }
 
 // ModelsCommand lists the models opencode can use.
