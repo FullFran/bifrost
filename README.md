@@ -15,23 +15,54 @@ Inspired by Google AX's declarative workspaces, but built for local development:
 1. **Context and token efficiency**: Running bulk refactoring or secondary reviews directly inside your primary interactive agent eats up the context window fast. Delegating self-contained tasks to an external CLI keeps the primary session lean.
 2. **Workspace safety**: Running autonomous agents in your current directory while you are coding leads to dirty git states and race conditions. Bifrost isolates each task into an ephemeral git worktree on its own branch.
 3. **Multi-agent flexibility**: Different tasks suit different tools. Google Antigravity (`agy`) gives you flat-rate Google AI Pro quota and grounded search; OpenCode (`opencode`) gives you local and open-source models. Bifrost provides a single interface with fallback routing across all of them.
+4. **Subagent engine for Gentle Shell**: Acts as the backend execution bridge for Gentle Shell / Pi, providing full agent capabilities (file tools, terminal commands, web search) packaged as native UI subagents with live thinking traces.
 
 ---
 
 ## How it works
 
-```text
-               ┌── [ -r agy ] ──────> Google Antigravity (Asgard)
-               │                      (AI Pro flat quota, web search)
-User / Script ─┼── [ -r opencode ] ──> OpenCode CLI (Midgard)
-               │                      (local models, open weights)
-               └── [ -w worktree ] ──> Ephemeral Git Worktree
-                                      (~/.cache/bifrost/worktrees/...)
+```mermaid
+flowchart LR
+    subgraph Ingress["Clients & Ingress"]
+        User["Developer Shell"]
+        GS["Gentle Shell / Pi<br/>(via agy-provider.ts)"]
+    end
+
+    subgraph Bifrost["Bifrost Dispatcher (Go)"]
+        Router["Realm Router & Config"]
+        WT["Worktree Isolation (-w)"]
+        Super["Process Supervisor (-b)"]
+        Stream["JSON Stream Engine (--json)"]
+    end
+
+    subgraph Realms["Agent Realms"]
+        Asgard["Google Antigravity (agy)<br/>Flat AI Pro Quota • Web Search"]
+        Midgard["OpenCode CLI (opencode)<br/>Local Weights • Open Source"]
+    end
+
+    User --> Router
+    GS --> Stream --> Router
+    Router --> WT
+    Router --> Super
+    Router --> Asgard
+    Router --> Midgard
 ```
 
 - **Realms**: Drivers that know how to invoke each agent headless with proper permissions (`agy -p ... --dangerously-skip-permissions` or `opencode run --auto ...`).
 - **Workspace Isolation (`-w`)**: Checks your git root and creates a temporary worktree (`bifrost/<task-id>`). The agent works there in isolation. You can review the diff and merge when ready.
 - **Detached Execution (`-b`)**: Detaches the process cleanly, captures all stdout/stderr to disk, tracks PIDs, and lets you follow the logs live in another terminal.
+- **JSON Streaming (`--json`)**: Streams line-delimited events on stdout for machine-to-machine integrations (e.g., Gentle Shell subagents).
+
+---
+
+## 📚 In-Depth Documentation
+
+Complete architecture diagrams and technical guides are available in the [`docs/`](docs/README.md) directory:
+
+- [**System Architecture & Design**](docs/architecture.md): Subsystems, C4 diagrams, and execution matrix.
+- [**Gentle Shell & Pi Subagent Integration**](docs/gentle-shell-integration.md): End-to-end sequence diagrams, Pi provider mechanics, and thinking stream mapping.
+- [**The Realms System**](docs/realms.md): Agent driver interface, model/effort reconciliation, and adding new backends.
+- [**Worktrees & Process Supervisor**](docs/worktrees-and-supervisor.md): Ephemeral Git workspaces, state machines, and background process management.
 
 ---
 
@@ -111,6 +142,21 @@ bifrost merge bf_20260923_150000_a1b2
 bifrost clean bf_20260923_150000_a1b2
 ```
 
+### 4. Gentle Shell / Pi Subagents
+
+Bifrost includes first-class support for driving native subagents in **Gentle Shell**:
+
+```bash
+# Streams agent JSON events on stdout for extension consumption
+bifrost --json -r agy -d /path/to/project -m gemini-3.8-flash-medium "Audit auth package"
+```
+
+In Gentle Shell, simply invoke `@agy`:
+```text
+@agy "Refactor the caching layer in internal/store"
+```
+The subagent widget will appear in the UI, tool executions stream into the collapsible **Thinking** view, and token usage reflects Google AI Pro quota. See [Gentle Shell Integration](docs/gentle-shell-integration.md) for details.
+
 ---
 
 ## Configuration
@@ -144,8 +190,6 @@ bifrost config set agy effort low
 bifrost config unset agy model             # back to agy's own default
 ```
 
-agy model IDs carry the effort as a suffix (`gemini-3.8-flash-high`). When you also pass an effort (`-e low` or `default_effort`), Bifrost swaps that suffix (`gemini-3.8-flash-low`) instead of sending both, which agy would reject.
-
 Check current active config at any time:
 
 ```bash
@@ -156,10 +200,18 @@ bifrost config
 
 ## Command Reference
 
-| Command | Description |
+| Command / Flag | Description |
 |---|---|
 | `bifrost "<prompt>"` | Dispatches a task to an agent realm |
+| `bifrost -r, --realm <REALM>` | Select target realm (`agy`, `opencode`, or `auto`) |
+| `bifrost -w, --worktree` | Isolate execution inside an ephemeral Git Worktree |
+| `bifrost -b, --bg` | Run asynchronously in background (detached job) |
+| `bifrost -m, --model <MODEL>`| Specify LLM model override |
+| `bifrost -e, --effort <VAL>` | Reasoning effort level (`low`, `medium`, `high`) |
+| `bifrost -d, --dir <DIR>` | Working directory (defaults to current directory) |
+| `bifrost --json` | Stream agent JSON events on stdout (diagnostics to stderr) |
 | `bifrost realms` | Doctor check: probes installed binaries and status |
+| `bifrost models [REALM]` | List models available to a specific realm |
 | `bifrost list` | Lists active and historical jobs |
 | `bifrost status <id>` | Shows detailed task state, PID, and duration |
 | `bifrost logs [-f] <id>` | Prints or streams (`-f`) execution logs |
@@ -169,6 +221,7 @@ bifrost config
 | `bifrost prune` | Cleans all finished jobs, logs, and orphan worktrees |
 | `bifrost abort <id>` | Gracefully terminates a running background task |
 | `bifrost config` | Shows current declarative configuration |
+| `bifrost config set/unset` | Sets or removes realm-specific defaults |
 
 ---
 
