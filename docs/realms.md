@@ -61,6 +61,16 @@ func init() {
   - `run --auto`: Unattended autonomous mode.
   - `-m <model>`: When an explicit model override is provided.
 
+### 2.3. Valhalla (`claude`) — Native Claude Code
+
+- **ID / binary**: `claude`, discovered on `$PATH` or at executable `~/.local/bin/claude`.
+- **Invocation**: `claude --dangerously-skip-permissions -p "<prompt>"`. Prompt and overrides are separate argv entries, not shell commands; the selected working directory is preserved.
+- **Streaming**: `--json` adds `--output-format stream-json --verbose --include-partial-messages`. Native Claude events pass through unchanged; Bifrost diagnostics stay on stderr. Consumers must understand Claude's event schema, not assume agy's schema.
+- **Model / effort**: optional `--model` and `--effort` pass through verbatim; CLI overrides win over realm config. With neither configured, Claude chooses its own defaults. No agy-style model-suffix rewriting applies.
+- **Models**: Claude does not implement Bifrost's optional model-listing interface; `bifrost models claude` does not invoke an unsupported `claude models` command.
+- **Authentication / usage**: Bifrost uses the native CLI's existing authentication, environment, and billing settings. It neither reads credentials nor forces subscription-only billing. Extra usage may incur charges depending on the user's Claude settings. No real-Claude billing experiment is part of this implementation.
+- **Safety**: permission checks are bypassed for unattended execution, just as with agy. Use trusted directories and optional worktree isolation; a worktree is not a security sandbox.
+
 ---
 
 ## 3. Realm Resolution & Fallback Flow
@@ -75,22 +85,38 @@ flowchart TD
     CheckFlag -->|No / auto| LoadPriority["Read priority from config.json<br/>(e.g., ['agy', 'opencode'])"]
     
     LoadPriority --> IterateRealms["Inspect first candidate realm"]
-    IterateRealms --> IsAvail{"Realm.IsAvailable()?"}
+    IterateRealms --> Policy{"enabled AND auto?"}
+    Policy -->|Yes| IsAvail{"Realm.IsAvailable()?"}
+    Policy -->|No| HasNext
     
     IsAvail -->|No| HasNext{"More realms in priority?"}
     HasNext -->|Yes| NextRealm["Check next realm"] --> IsAvail
-    HasNext -->|No| FailAvail["Error: No available realms found"]
+    HasNext -->|No| FailAvail["Try eligible registry realms, then error if none available"]
     
     IsAvail -->|Yes| LaunchTask["Launch Task with Realm"]
-    TargetRealm --> LaunchTask
+    TargetRealm --> Enabled{"enabled?"}
+    Enabled -->|Yes| ExplicitAvail{"Realm.IsAvailable()?"}
+    Enabled -->|No| Rejected["Error: realm disabled"]
+    ExplicitAvail -->|Yes| LaunchTask
+    ExplicitAvail -->|No| Unavailable["Error: realm unavailable"]
     
     LaunchTask --> RunTask{"Execution succeeds?"}
     RunTask -->|Yes| Success["Task Completed"]
-    RunTask -->|No| CheckFallback{"fallback_on_error == true?"}
-    
-    CheckFallback -->|Yes| TryNext["Fallback to next available realm"] --> LaunchTask
-    CheckFallback -->|No| Error["Exit with error"]
+    RunTask -->|No| Error["Exit with error (no execution-error retry)"]
 ```
+
+### Shared routing controls
+
+```bash
+bifrost config --json
+bifrost config set claude enabled false
+bifrost config set opencode auto false
+bifrost config unset opencode auto
+```
+
+`enabled=false` blocks explicit dispatch and auto routing. `auto=false` only excludes automatic selection, including registry fallback. Omitted values mean `true` for backward compatibility. Boolean setters accept only lowercase `true` or `false`; unset restores the default. Machine-readable config exposes effective booleans for all registered realms alongside model/effort and priority. The human-readable `bifrost config` retains its file-location banner.
+
+New configs prioritize `agy`, `opencode`, then `claude`; old priority lists are not rewritten. The historical registry fallback remains, but is policy-filtered. `fallback_on_error` remains a compatible stored setting; this dispatcher does **not** implement retry after an agent execution failure. Invalid JSON, wrong policy types, and null policies stop dispatch/config mutation; they never fall back to permissive defaults. Policy is checked when dispatch is requested; changing it does not cancel running jobs.
 
 ---
 
@@ -102,10 +128,13 @@ You can inspect all configured realms and verify environment readiness using CLI
 ```bash
 $ bifrost realms
 
-REALM     NAME                           STATUS      PATH
-agy       Asgard (Google Antigravity)    AVAILABLE   /home/fran/.local/bin/agy
-opencode  Midgard (OpenCode CLI)         AVAILABLE   /usr/local/bin/opencode
+REALM     NAME                          STATUS          ENABLED  AUTO   DETAILS
+agy       Asgard (Google Antigravity)   ✅ Operational  true     true   /path/to/agy
+opencode  Midgard (OpenCode)            ✅ Operational  true     false  /path/to/opencode
+claude    Valhalla (Claude Code)        ✅ Operational  false    true   /path/to/claude
 ```
+
+Availability means binary discovery, not authentication, account quota, or billing readiness. The `ENABLED` and `AUTO` columns describe policy independently of installation; disabled binaries may still be installed and reported operational.
 
 ### Inspect models supported by a realm:
 ```bash
@@ -122,7 +151,7 @@ gemini-4-argon-high       Gemini 4 Argon (High Reasoning)
 
 ## 5. Adding a New Realm
 
-To add a new backend (e.g. `Valhalla / claude-code` or `Vanaheim / aider`):
+To add a new backend (e.g. `Vanaheim / aider`):
 
 1. Create a new file in `internal/realm/<name>.go`.
 2. Implement the `Realm` interface:

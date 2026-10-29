@@ -31,7 +31,7 @@ func generateTaskID() string {
 
 func printHelp() {
 	fmt.Printf(`🌈 Bifrost v%s - The Universal AI Coding Agent Bridge
-Cross the realms of Google Antigravity, OpenCode, and beyond.
+Cross the realms of Google Antigravity, OpenCode, and Claude Code.
 
 USAGE:
   bifrost [OPTIONS] "<PROMPT>"
@@ -46,18 +46,19 @@ SUBCOMMANDS:
   merge <JOB_ID>       Merge an isolated worktree branch into current branch
   clean <JOB_ID>       Clean worktree directory and temporary branches
   prune                Remove all finished jobs, orphan worktrees, and logs
-  config               Display current declarative configuration
-  config set <REALM> <model|effort> <VALUE>
+  config [--json]      Display configuration (JSON includes effective realm policy)
+  config set <REALM> <model|effort|enabled|auto> <VALUE>
                        Set a per-realm default (e.g. config set agy model gemini-4-argon-high)
-  config unset <REALM> <model|effort>
-                       Remove a default so the agent's own default applies
+                       enabled/auto accept only true or false (omitted means true)
+  config unset <REALM> <model|effort|enabled|auto>
+                       Remove a default (policy defaults to true)
   models [REALM]       List the models each realm can use
   realms               Inspect available agent realms and doctor check
   version              Show Bifrost version
 
 OPTIONS:
   -r, --realm <REALM>  Target realm to route the task (default: "auto")
-                       Available: agy (Asgard), opencode (Midgard)
+                       Available: agy (Asgard), opencode (Midgard), claude (Valhalla)
   -w, --worktree       Isolate execution inside an ephemeral Git Worktree
   -b, --bg             Run in background (asynchronous detached task)
   -m, --model <MODEL>  Specify LLM model override
@@ -67,7 +68,7 @@ OPTIONS:
   -h, --help           Show this help message
 
 EXAMPLES:
-  # Route task with automatic realm selection (Asgard -> Midgard)
+  # Route task with automatic realm selection (Asgard -> Midgard -> Valhalla)
   bifrost "Audit src/auth.go for concurrency issues"
 
   # Run in background inside an isolated Git Worktree
@@ -90,12 +91,20 @@ func main() {
 	}
 
 	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
-		cfg = config.DefaultConfig()
-	}
-
 	firstArg := os.Args[1]
+	if err != nil {
+		// Dispatch and policy inspection/mutation must never silently replace
+		// invalid controls with permissive defaults. Unrelated job commands
+		// retain their historical recovery behavior.
+		switch firstArg {
+		case "version", "--version", "-v", "help", "--help", "-h", "models", "list", "ps", "status", "logs", "log", "abort", "kill", "diff", "merge", "clean", "prune":
+			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+			cfg = config.DefaultConfig()
+		default:
+			fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// Internal worker execution
 	if firstArg == "__worker" {
@@ -119,7 +128,7 @@ func main() {
 		printHelp()
 		return
 	case "realms", "doctor":
-		cmdDoctor()
+		cmdDoctor(cfg)
 		return
 	case "config":
 		cmdConfig(os.Args[2:], cfg)
@@ -182,6 +191,25 @@ func main() {
 }
 
 func cmdConfig(args []string, cfg *config.Config) {
+	if len(args) == 1 && args[0] == "--json" {
+		// Expose effective policy without changing the stored omission semantics.
+		effective := *cfg
+		effective.Realms = make(map[string]config.RealmConfig)
+		for id, rc := range cfg.Realms {
+			effective.Realms[id] = rc
+		}
+		for _, r := range realm.All() {
+			rc := effective.Realms[r.ID()]
+			enabled, auto := rc.IsEnabled(), rc.IsAuto()
+			rc.Enabled, rc.Auto = &enabled, &auto
+			effective.Realms[r.ID()] = rc
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(&effective); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to encode config: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) > 0 {
 		var realmID, key, value string
 		switch {
@@ -190,12 +218,16 @@ func cmdConfig(args []string, cfg *config.Config) {
 		case args[0] == "unset" && len(args) == 3:
 			realmID, key = args[1], args[2]
 		default:
-			fmt.Fprintln(os.Stderr, "Usage: bifrost config set <REALM> <model|effort> <VALUE>")
-			fmt.Fprintln(os.Stderr, "       bifrost config unset <REALM> <model|effort>")
+			fmt.Fprintln(os.Stderr, "Usage: bifrost config set <REALM> <model|effort|enabled|auto> <VALUE>")
+			fmt.Fprintln(os.Stderr, "       bifrost config unset <REALM> <model|effort|enabled|auto>")
 			os.Exit(1)
 		}
 		if _, ok := realm.Get(realmID); !ok {
 			fmt.Fprintf(os.Stderr, "Error: unknown realm %q\n", realmID)
+			os.Exit(1)
+		}
+		if args[0] == "set" && (key == "enabled" || key == "auto") && value == "" {
+			fmt.Fprintf(os.Stderr, "Error: invalid value %q for %s (expected true or false)\n", value, key)
 			os.Exit(1)
 		}
 		if err := cfg.SetRealmOption(realmID, key, value); err != nil {
@@ -258,11 +290,11 @@ func cmdModels(args []string) {
 	}
 }
 
-func cmdDoctor() {
+func cmdDoctor(cfg *config.Config) {
 	fmt.Println("🌈 Bifrost Realms & Doctor Check:")
 	fmt.Println("--------------------------------------------------------------------------------")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	_, _ = fmt.Fprintln(w, "REALM\tNAME\tSTATUS\tDETAILS")
+	_, _ = fmt.Fprintln(w, "REALM\tNAME\tSTATUS\tENABLED\tAUTO\tDETAILS")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -273,7 +305,8 @@ func cmdDoctor() {
 		if avail {
 			status = "✅ Operational"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID(), r.Name(), status, details)
+		policy := cfg.Realms[r.ID()]
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%t\t%s\n", r.ID(), r.Name(), status, policy.IsEnabled(), policy.IsAuto(), details)
 	}
 	_ = w.Flush()
 	fmt.Println("--------------------------------------------------------------------------------")
@@ -449,7 +482,7 @@ func cmdDispatch(args []string, cfg *config.Config) {
 	if defaultRealm == "" {
 		defaultRealm = "auto"
 	}
-	realmFlag := fs.String("realm", defaultRealm, "Target realm (agy, opencode, auto)")
+	realmFlag := fs.String("realm", defaultRealm, "Target realm (agy, opencode, claude, auto)")
 	fs.StringVar(realmFlag, "r", defaultRealm, "Short alias for --realm")
 
 	worktreeFlag := fs.Bool("worktree", false, "Isolate in ephemeral Git Worktree")
@@ -495,7 +528,7 @@ func cmdDispatch(args []string, cfg *config.Config) {
 	defer stop()
 
 	// 1. Resolve Realm using priority list from config
-	targetRealm, err := realm.ResolveRealm(ctx, *realmFlag, cfg.Priority)
+	targetRealm, err := realm.ResolveRealmWithPolicy(ctx, *realmFlag, cfg.Priority, cfg.Realms)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Bridge routing error: %v\n", err)
 		os.Exit(1)

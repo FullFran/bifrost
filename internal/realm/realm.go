@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/FullFran/bifrost/internal/config"
 )
 
 // Task represents a unit of work dispatched through Bifrost.
@@ -74,10 +76,19 @@ func AvailableRealms(ctx context.Context) []Realm {
 
 // ResolveRealm determines which realm to use based on preference and priority list.
 func ResolveRealm(ctx context.Context, preference string, priority []string) (Realm, error) {
+	return ResolveRealmWithPolicy(ctx, preference, priority, nil)
+}
+
+// ResolveRealmWithPolicy applies the same policy to priority and registry fallback.
+// Missing controls retain the historical enabled/auto behavior.
+func ResolveRealmWithPolicy(ctx context.Context, preference string, priority []string, policies map[string]config.RealmConfig) (Realm, error) {
 	if preference != "" && preference != "auto" {
 		r, ok := Get(preference)
 		if !ok {
 			return nil, fmt.Errorf("realm '%s' is not registered", preference)
+		}
+		if !policies[preference].IsEnabled() {
+			return nil, fmt.Errorf("realm '%s' is disabled", preference)
 		}
 		if ok, reason := r.IsAvailable(ctx); !ok {
 			return nil, fmt.Errorf("realm '%s' is unavailable: %s", preference, reason)
@@ -86,8 +97,9 @@ func ResolveRealm(ctx context.Context, preference string, priority []string) (Re
 	}
 
 	// Check realms according to configured priority first
+	eligible := func(id string) bool { return policies[id].IsEnabled() && policies[id].IsAuto() }
 	for _, id := range priority {
-		if r, ok := Get(id); ok {
+		if r, ok := Get(id); ok && eligible(id) {
 			if avail, _ := r.IsAvailable(ctx); avail {
 				return r, nil
 			}
@@ -96,10 +108,13 @@ func ResolveRealm(ctx context.Context, preference string, priority []string) (Re
 
 	// Fallback to any available realm
 	for _, r := range All() {
+		if !eligible(r.ID()) {
+			continue
+		}
 		if ok, _ := r.IsAvailable(ctx); ok {
 			return r, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no operational realms found. Install 'agy' or 'opencode'")
+	return nil, fmt.Errorf("no operational realms found eligible for auto. Install 'agy', 'opencode', or 'claude' and enable automatic routing")
 }
