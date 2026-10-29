@@ -39,7 +39,7 @@ func init() {
 - **Flags Injected**:
   - `--dangerously-skip-permissions`: Runs unattended in headless/background mode.
   - `-p "<prompt>"`: The prompt string.
-  - `--output-format stream-json`: Injected when `task.StreamJSON` is enabled (for `--json` / Gentle Shell).
+  - `--output-format stream-json`: Injected when `task.StreamJSON` is enabled (for `--json` / Pi extensions).
 - **Model & Effort Reconciliation**:
   Antigravity encodes reasoning effort directly into model IDs (e.g. `gemini-3.8-flash-high`). If a user passes both `--model gemini-3.8-flash-high` and `--effort low`, `agy` would reject the command due to conflict. Bifrost intelligently inspects the suffix and swaps it to `gemini-3.8-flash-low`:
   ```go
