@@ -3,4 +3,5 @@ dist/
 *.log
 *.pid
 .cache/
+.atl/
 .DS_Store
