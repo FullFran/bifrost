@@ -6,13 +6,13 @@ Bifrost is a lightweight, compiled Go CLI designed to route, dispatch, and isola
 
 ## 1. High-Level Architecture
 
-Bifrost acts as the orchestration layer between the user (or client interfaces like Gentle Shell) and underlying AI agent CLI runtimes. It abstracts execution mechanics, workspace isolation, background process lifecycle, and output formatting.
+Bifrost acts as the orchestration layer between the user (or client interfaces like the Pi coding agent ecosystem and Gentle Shell) and underlying AI agent CLI runtimes. It abstracts execution mechanics, workspace isolation, background process lifecycle, and output formatting.
 
 ```mermaid
 flowchart TB
     subgraph Clients["Clients & Entrypoints"]
         CLI["Developer Terminal<br/>(CLI flags & subcommands)"]
-        GS["Gentle Shell / Pi<br/>(via agy-provider.ts)"]
+        GS["Pi Agent / Gentle Shell<br/>(via agy-provider.ts)"]
         Scripts["Automation Scripts / CI"]
     end
 
@@ -116,7 +116,7 @@ When running large refactors or test suites, tasks can take minutes. Bifrost pro
   - `bifrost abort <id>`: Sends a graceful termination signal (`SIGTERM` followed by `SIGKILL` if unresponsive) using OS-level process groups.
 
 ### 2.4. JSON Streaming Protocol (`--json`)
-Designed for IDE and shell integrations (such as Gentle Shell):
+Designed for host environments and subagent extensions (such as Pi coding agent / Gentle Shell):
 * When `--json` is supplied, Bifrost tells the agent to produce line-delimited streaming JSON events on `stdout`.
 * All Bifrost internal logs, banner texts, and diagnostics are redirected to `stderr`.
 * This creates a clean machine-readable pipeline where consumer applications parse live agent progress, tool calls, and token usage while remaining interactive.
@@ -132,4 +132,4 @@ Bifrost supports 4 execution modes based on flags:
 | **Direct Foreground** | `bifrost "Fix lint errors"` | Quick synchronous edits directly in your current directory. |
 | **Isolated Worktree** | `bifrost -w "Migrate DB schema"` | Synchronous edits in an ephemeral branch to protect your workspace. |
 | **Detached Background** | `bifrost -w -b "Write unit tests for /pkg"` | Long-running tasks running in isolation while you keep working. |
-| **Stream JSON (Subagent)** | `bifrost --json -r agy "<prompt>"` | Machine-to-machine streaming for Gentle Shell / Pi subagents. |
+| **Stream JSON (Subagent)** | `bifrost --json -r agy "<prompt>"` | Machine-to-machine streaming for Pi / Gentle Shell subagents. |

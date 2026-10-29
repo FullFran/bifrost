@@ -15,7 +15,7 @@ Inspired by Google AX's declarative workspaces, but built for local development:
 1. **Context and token efficiency**: Running bulk refactoring or secondary reviews directly inside your primary interactive agent eats up the context window fast. Delegating self-contained tasks to an external CLI keeps the primary session lean.
 2. **Workspace safety**: Running autonomous agents in your current directory while you are coding leads to dirty git states and race conditions. Bifrost isolates each task into an ephemeral git worktree on its own branch.
 3. **Multi-agent flexibility**: Different tasks suit different tools. Google Antigravity (`agy`) gives you flat-rate Google AI Pro quota and grounded search; OpenCode (`opencode`) gives you local and open-source models. Bifrost provides a single interface with fallback routing across all of them.
-4. **Subagent engine for Gentle Shell**: Acts as the backend execution bridge for Gentle Shell / Pi, providing full agent capabilities (file tools, terminal commands, web search) packaged as native UI subagents with live thinking traces.
+4. **Subagent engine for Pi Coding Agent**: Acts as the backend execution bridge for Pi (`@earendil-works/pi-coding-agent`) and frontends like Gentle Shell, providing full agent capabilities (file tools, terminal commands, web search) packaged as native UI subagents with live thinking traces.
 
 ---
 
@@ -25,7 +25,7 @@ Inspired by Google AX's declarative workspaces, but built for local development:
 flowchart LR
     subgraph Ingress["Clients & Ingress"]
         User["Developer Shell"]
-        GS["Gentle Shell / Pi<br/>(via agy-provider.ts)"]
+        GS["Pi Agent / Gentle Shell<br/>(via agy-provider.ts)"]
     end
 
     subgraph Bifrost["Bifrost Dispatcher (Go)"]
@@ -51,7 +51,7 @@ flowchart LR
 - **Realms**: Drivers that know how to invoke each agent headless with proper permissions (`agy -p ... --dangerously-skip-permissions` or `opencode run --auto ...`).
 - **Workspace Isolation (`-w`)**: Checks your git root and creates a temporary worktree (`bifrost/<task-id>`). The agent works there in isolation. You can review the diff and merge when ready.
 - **Detached Execution (`-b`)**: Detaches the process cleanly, captures all stdout/stderr to disk, tracks PIDs, and lets you follow the logs live in another terminal.
-- **JSON Streaming (`--json`)**: Streams line-delimited events on stdout for machine-to-machine integrations (e.g., Gentle Shell subagents).
+- **JSON Streaming (`--json`)**: Streams line-delimited events on stdout for machine-to-machine integrations (e.g., Pi / Gentle Shell subagents).
 
 ---
 
@@ -60,7 +60,7 @@ flowchart LR
 Complete architecture diagrams and technical guides are available in the [`docs/`](docs/README.md) directory:
 
 - [**System Architecture & Design**](docs/architecture.md): Subsystems, C4 diagrams, and execution matrix.
-- [**Gentle Shell & Pi Subagent Integration**](docs/gentle-shell-integration.md): End-to-end sequence diagrams, Pi provider mechanics, and thinking stream mapping.
+- [**Pi Agent & Subagent Integration**](docs/pi-integration.md): End-to-end sequence diagrams, Pi provider mechanics, and thinking stream mapping.
 - [**The Realms System**](docs/realms.md): Agent driver interface, model/effort reconciliation, and adding new backends.
 - [**Worktrees & Process Supervisor**](docs/worktrees-and-supervisor.md): Ephemeral Git workspaces, state machines, and background process management.
 
@@ -142,20 +142,20 @@ bifrost merge bf_20260923_150000_a1b2
 bifrost clean bf_20260923_150000_a1b2
 ```
 
-### 4. Gentle Shell / Pi Subagents
+### 4. Pi Coding Agent Subagents
 
-Bifrost includes first-class support for driving native subagents in **Gentle Shell**:
+Bifrost includes first-class support for driving native subagents in **Pi** (`@earendil-works/pi-coding-agent`) and frontends like **Gentle Shell**:
 
 ```bash
 # Streams agent JSON events on stdout for extension consumption
 bifrost --json -r agy -d /path/to/project -m gemini-3.8-flash-medium "Audit auth package"
 ```
 
-In Gentle Shell, simply invoke `@agy`:
+In any Pi environment (such as Gentle Shell), simply invoke `@agy`:
 ```text
 @agy "Refactor the caching layer in internal/store"
 ```
-The subagent widget will appear in the UI, tool executions stream into the collapsible **Thinking** view, and token usage reflects Google AI Pro quota. See [Gentle Shell Integration](docs/gentle-shell-integration.md) for details.
+The subagent widget will appear in the UI, tool executions stream into the collapsible **Thinking** view, and token usage reflects Google AI Pro quota. See [Pi Integration](docs/pi-integration.md) for details.
 
 ---
 
