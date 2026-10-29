@@ -1,0 +1,14 @@
+{
+  "name": "bifrost-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bifrost native-agent providers and realm controls for Pi",
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=24" },
+  "pi": { "extensions": ["./pi/index.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
