@@ -4,4 +4,5 @@ dist/
 *.pid
 .cache/
 .atl/
+odd/
 .DS_Store

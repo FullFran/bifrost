@@ -86,13 +86,13 @@ When a job is launched with `-b`:
      "id": "bf_20261029_102500_a1b2",
      "realm": "agy",
      "prompt": "Write unit tests for /internal/supervisor",
-     "work_dir": "/home/fran/fullfran/bifrost",
+     "work_dir": "/home/user/projects/bifrost",
      "worktree_branch": "bifrost/bf_20261029_102500_a1b2",
-     "worktree_path": "/home/fran/.cache/bifrost/worktrees/bf_20261029_102500_a1b2",
+     "worktree_path": "/home/user/.cache/bifrost/worktrees/bf_20261029_102500_a1b2",
      "pid": 38412,
      "status": "RUNNING",
      "created_at": "2026-10-29T10:25:00Z",
-     "log_file": "/home/fran/.cache/bifrost/jobs/bf_20261029_102500_a1b2.log"
+     "log_file": "/home/user/.cache/bifrost/jobs/bf_20261029_102500_a1b2.log"
    }
    ```
 2. **Process Group Isolation**:

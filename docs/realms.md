@@ -6,7 +6,7 @@ Bifrost uses the **Realms** pattern to decouple high-level orchestration (routin
 
 ## 1. The Realm Interface
 
-Every agent supported by Bifrost implements the `Realm` interface defined in [`internal/realm/realm.go`](file:///home/fran/fullfran/bifrost/internal/realm/realm.go):
+Every agent supported by Bifrost implements the `Realm` interface defined in [`internal/realm/realm.go`](../internal/realm/realm.go):
 
 ```go
 type Realm interface {
