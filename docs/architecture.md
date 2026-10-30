@@ -1,6 +1,6 @@
 # Bifrost Architecture & System Design
 
-Bifrost is a lightweight, compiled Go CLI designed to route, dispatch, and isolate autonomous AI coding agents (`agy`, `opencode`, and future backends) on local developer workstations.
+Bifrost is a lightweight, compiled Go CLI designed to route, dispatch, and isolate autonomous AI coding agents (`agy`, `opencode`, and native Claude Code) on local developer workstations.
 
 ---
 
@@ -32,7 +32,8 @@ flowchart TB
     subgraph Realms["Agent Realms (Backends)"]
         Asgard["Asgard Realm<br/>(Google Antigravity / agy)"]
         Midgard["Midgard Realm<br/>(OpenCode CLI / opencode)"]
-        FutureRealms["Future Realms<br/>(Claude Code, Codex, etc.)"]
+        Valhalla["Valhalla Realm<br/>(Native Claude Code / claude)"]
+        FutureRealms["Future Realms<br/>(Codex, etc.)"]
     end
 
     subgraph Storage["Host Storage & Isolation"]
@@ -48,6 +49,7 @@ flowchart TB
 
     RealmRegistry --> Asgard
     RealmRegistry --> Midgard
+    RealmRegistry --> Valhalla
     RealmRegistry -.-> FutureRealms
 
     Supervisor --> Cache
@@ -74,7 +76,9 @@ type Realm interface {
 
 * **Asgard (`agy`)**: Dispatches tasks to Google Antigravity. Operates under flat-rate Google AI Pro quota with web search grounding and deep reasoning. Manages `--dangerously-skip-permissions`, effort level suffixes (e.g., `gemini-3.8-flash-high`), and `--output-format stream-json`.
 * **Midgard (`opencode`)**: Dispatches tasks to OpenCode CLI for local weights and open-source models.
-* **Dynamic Resolution & Fallback**: If `-r auto` (default) is set, Bifrost queries the priority list defined in `config.json`. If the primary realm fails or is unavailable and `fallback_on_error` is true, Bifrost seamlessly tries the next available realm.
+* **Valhalla (`claude`)**: Dispatches native Claude Code using `--dangerously-skip-permissions -p`, optional model/effort, and native stream-json with verbose partial messages. Authentication and billing remain the installed CLI's responsibility; Bifrost does not inspect credentials or guarantee subscription-only usage.
+* **Dynamic Resolution & Policy**: If `-r auto` (default) is set, Bifrost checks configured priority (new configs: agy → opencode → claude), then the historical registry fallback. Both paths require effective `enabled=true` and `auto=true`. Explicit dispatch only requires `enabled=true` plus binary availability. Omitted controls remain true for old configs. Invalid config fails closed before dispatch; execution-error retries are not implemented even though the legacy `fallback_on_error` setting is retained.
+* **Configuration Surface**: `bifrost config --json` emits JSON only, with effective realm policies. `config set <realm> enabled|auto true|false` and `config unset` share the existing model/effort configuration writer. Doctor reports installation availability independently from effective policy. Controls apply at dispatch time, not retroactively to running jobs.
 
 ### 2.2. Workspace Isolation (`internal/workspace`)
 Autonomous coding agents can modify files unexpectedly. To guarantee zero side-effects on your active working directory, Bifrost uses native Git worktrees:

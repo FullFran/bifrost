@@ -1,6 +1,6 @@
 # bifrost
 
-A fast, compiled Go CLI to route, dispatch, and isolate AI coding agents (`agy`, `opencode`, and upcoming backends) on your machine.
+A fast, compiled Go CLI to route, dispatch, and isolate AI coding agents (`agy`, `opencode`, and native Claude Code) on your machine.
 
 Inspired by Google AX's declarative workspaces, but built for local development: instead of running heavy cluster infrastructure, it uses native Git worktrees so background agents can refactor and test code without touching your active editor or uncommitted files.
 
@@ -38,6 +38,7 @@ flowchart LR
     subgraph Realms["Agent Realms"]
         Asgard["Google Antigravity (agy)<br/>Flat AI Pro Quota • Web Search"]
         Midgard["OpenCode CLI (opencode)<br/>Local Weights • Open Source"]
+        Valhalla["Claude Code (claude)<br/>Native CLI • Existing Login"]
     end
 
     User --> Router
@@ -46,6 +47,7 @@ flowchart LR
     Router --> Super
     Router --> Asgard
     Router --> Midgard
+    Router --> Valhalla
 ```
 
 - **Realms**: Drivers that know how to invoke each agent headless with proper permissions (`agy -p ... --dangerously-skip-permissions` or `opencode run --auto ...`).
@@ -95,12 +97,13 @@ bifrost realms
 ### 1. Basic dispatch
 
 ```bash
-# Auto-route using configured priority (default: agy -> opencode)
+# Auto-route using configured priority (default: agy -> opencode -> claude)
 bifrost "Audit internal/router for concurrency issues"
 
 # Target a specific agent
 bifrost -r agy "Write unit tests for the supervisor package"
 bifrost -r opencode "Refactor this helper function"
+bifrost -r claude "Review the parser"
 ```
 
 ### 2. Isolated execution (Git Worktree)
@@ -168,7 +171,8 @@ Settings live in `~/.config/bifrost/config.json`:
   "default_realm": "auto",
   "priority": [
     "agy",
-    "opencode"
+    "opencode",
+    "claude"
   ],
   "fallback_on_error": true,
   "worktree": {
@@ -176,7 +180,8 @@ Settings live in `~/.config/bifrost/config.json`:
   },
   "realms": {
     "agy": {},
-    "opencode": {}
+    "opencode": {},
+    "claude": {}
   }
 }
 ```
@@ -190,11 +195,21 @@ bifrost config set agy effort low
 bifrost config unset agy model             # back to agy's own default
 ```
 
-Check current active config at any time:
+Inspect configuration or control any realm without editing JSON:
 
 ```bash
-bifrost config
+bifrost config                         # human-readable display and file location
+bifrost config --json                  # JSON only; includes effective enabled/auto booleans
+bifrost config set claude enabled false # block explicit AND automatic dispatch
+bifrost config set claude enabled true
+bifrost config set claude auto false    # explicit -r claude still allowed
+bifrost config unset claude auto        # restore default true
+bifrost doctor                         # installation availability and policy in separate columns
 ```
+
+Both `enabled` and `auto` accept exactly `true` or `false`. Omitted controls default to `true`, including in existing config files. Existing priority lists are preserved; newly generated configs append Claude after agy and OpenCode. Automatic routing filters both the priority list and the registry fallback by these controls. Malformed configuration stops dispatch and config changes instead of silently enabling realms.
+
+Claude is launched as the **native installed CLI**, using its existing login and settings. Bifrost does not read credentials, select a billing account, or guarantee subscription-only usage. Check your Claude Code account and extra-usage settings yourself before dispatch. All native Claude tasks use `--dangerously-skip-permissions -p`; only use this unattended mode in trusted workspaces. See [Claude realm details](docs/realms.md#23-valhalla-claude--native-claude-code).
 
 ---
 
@@ -203,7 +218,7 @@ bifrost config
 | Command / Flag | Description |
 |---|---|
 | `bifrost "<prompt>"` | Dispatches a task to an agent realm |
-| `bifrost -r, --realm <REALM>` | Select target realm (`agy`, `opencode`, or `auto`) |
+| `bifrost -r, --realm <REALM>` | Select target realm (`agy`, `opencode`, `claude`, or `auto`) |
 | `bifrost -w, --worktree` | Isolate execution inside an ephemeral Git Worktree |
 | `bifrost -b, --bg` | Run asynchronously in background (detached job) |
 | `bifrost -m, --model <MODEL>`| Specify LLM model override |
@@ -220,8 +235,8 @@ bifrost config
 | `bifrost clean <id>` | Removes worktree directory and temporary branch |
 | `bifrost prune` | Cleans all finished jobs, logs, and orphan worktrees |
 | `bifrost abort <id>` | Gracefully terminates a running background task |
-| `bifrost config` | Shows current declarative configuration |
-| `bifrost config set/unset` | Sets or removes realm-specific defaults |
+| `bifrost config [--json]` | Shows configuration; `--json` emits effective policy without a banner |
+| `bifrost config set/unset` | Sets or removes realm-specific `model`, `effort`, `enabled`, or `auto` |
 
 ---
 
