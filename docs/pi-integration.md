@@ -103,7 +103,7 @@ follow-ups replay text conversation into a fresh native dispatch. Pi tool
 schemas are not forwarded. Only text input is advertised; there is no native
 session-resume or image handoff.
 
-Native Claude `stream-json` tool/narration events become thinking. Partial activity is buffered until the completed assistant snapshot, next message, or terminal result, so snapshots and deltas are not displayed twice and tool arguments remain complete. The terminal
+Native Claude `stream-json` tool/narration events become thinking. Text and thinking deltas (Claude and agy) stream live, and snapshots only add what the deltas did not deliver. Tool lines wait for their complete arguments: the assistant snapshot, the next block, next message, or terminal result. A final answer cannot be told from narration until `result`, so it shows live in thinking and then again as text. The terminal
 `result` supplies final text and usage (input, output, cache read/write); native
 errors, malformed JSON, missing/invalid final results, and **any nonzero or
 signal exit even after a success result** fail closed. Empty successful text is

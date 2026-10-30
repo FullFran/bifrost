@@ -154,6 +154,58 @@ test('Claude preserves native non-stream content and partial-only tools and text
   assert.equal(message.content[0].thinking, 'same\nsame\n→ Read: native.ts\n→ Read: partial.ts\nstart end');
   assert.equal(message.content.at(-1).text, 'final');
 });
+test('Claude streams text and thinking live and holds tools until their input is complete', async () => {
+  const partial = event => ({ type: 'stream_event', event });
+  const delta = (index, type, key, value) => partial({ type: 'content_block_delta', index, delta: { type, [key]: value } });
+  const { message, events, last } = await run(harness({ lines: [
+    partial({ type: 'message_start', message: { id: 'm1' } }),
+    partial({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    delta(0, 'thinking_delta', 'thinking', 'pl'), delta(0, 'thinking_delta', 'thinking', 'an'),
+    partial({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+    delta(1, 'text_delta', 'text', 'hel'), delta(1, 'text_delta', 'text', 'lo'),
+    partial({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 't1', name: 'Read', input: {} } }),
+    delta(2, 'input_json_delta', 'partial_json', '{"path"'), delta(2, 'input_json_delta', 'partial_json', ':"a.ts"}'),
+    partial({ type: 'content_block_stop', index: 2 }),
+    // The CLI snapshots one block at a time, so snapshot positions differ from stream indexes.
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'thinking', thinking: 'plan' }] } },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { path: 'a.ts' } }] } },
+    success('hello'),
+  ] }));
+  assert.equal(last.type, 'done');
+  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['pl', 'an', '\nhel', 'lo', '\n→ Read: a.ts']);
+  assert.equal(message.content[0].thinking, 'plan\nhello\n→ Read: a.ts');
+  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hello']);
+});
+test('Claude keeps a tool before live text in order, without repeating text in later snapshots', async () => {
+  const partial = event => ({ type: 'stream_event', event });
+  const { message, events } = await run(harness({ lines: [
+    partial({ type: 'message_start', message: { id: 'm1' } }),
+    partial({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Read', input: {} } }),
+    partial({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"a.ts"}' } }),
+    partial({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+    partial({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'hel' } }),
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { path: 'a.ts' } }] } },
+    // A snapshot can carry text the partial stream never delivered; only the rest is new.
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { path: 'a.ts' } }, { type: 'text', text: 'hello' }] } },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } },
+    success('hello'),
+  ] }));
+  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['→ Read: a.ts', '\nhel', 'lo']);
+  assert.equal(message.content[0].thinking, '→ Read: a.ts\nhello');
+});
+test('agy streams narration live around tools and still answers only from the result', async () => {
+  const say = text_delta => ({ step_update: { step_type: 'agent_response', text_delta } });
+  const { message, events, last } = await run(harness({ lines: [
+    say('\n'), say('hel'), say('lo'),
+    { step_update: { step_type: 'tool', state: 'ACTIVE', tool_name: 'read', tool_info: { parameters: { path: 'a' } } } },
+    say('bye'),
+    { result: { status: 'SUCCESS', response: 'answer' } },
+  ] }), 'agy');
+  assert.equal(last.type, 'done');
+  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['hel', 'lo', '\n→ read: a', '\nbye']);
+  assert.equal(message.content.at(-1).text, 'answer');
+});
 test('system/subagent instructions survive dispatch without Pi tool declarations', async () => {
   const h = harness({ lines: [success()] });
   await run(h, 'claude', {}, [{ role: 'system', content: [{ type: 'text', text: 'Worker instructions' }], tools: [{ name: 'danger' }] }, { role: 'user', content: 'task' }]);

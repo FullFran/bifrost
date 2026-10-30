@@ -52,24 +52,30 @@ function nativeUsage(usage, out) {
   out.input = count(usage?.input_tokens); out.output = count(usage?.output_tokens);
   out.cacheRead = count(usage?.cache_read_input_tokens); out.cacheWrite = count(usage?.cache_creation_input_tokens);
 }
-// Hold partial blocks until their assistant snapshot supplies complete tool inputs.
+// Text and thinking stream as they arrive; tools wait for complete inputs, from their snapshot or a later block.
 // Message IDs scope block indexes; tool IDs identify tools within each message.
-function claudeActivity(think) {
+function claudeActivity(think, append) {
   const messages = new Map();
   let current;
   const fresh = () => ({ blocks: new Map() });
+  const body = part => part.type === 'text' ? part.text : part.thinking;
   const flush = message => {
     if (!message) return;
     for (const entry of message.blocks.values()) {
-      if (entry.emitted) continue;
       const part = entry.part;
       if (part.type === 'tool_use') {
+        if (entry.emitted) continue;
         let input = part.input;
         if (entry.json) { try { input = JSON.parse(entry.json); } catch { /* Retain native input on truncated JSON. */ } }
         think(`→ ${summary(part.name, input)}`);
-      } else if (part.type === 'text') think(part.text);
-      else if (part.type === 'thinking') think(part.thinking);
-      entry.emitted = true;
+        entry.emitted = true;
+      } else if (part.type === 'text' || part.type === 'thinking') {
+        // Emit only what is new; a snapshot that disagrees with shown text cannot retract it.
+        const text = body(part) ?? '', shown = entry.shown ?? '';
+        if (text.length <= shown.length || !text.startsWith(shown)) continue;
+        (shown ? append : think)(text.slice(shown.length));
+        entry.shown = text;
+      }
     }
   };
   return event => {
@@ -96,13 +102,17 @@ function claudeActivity(think) {
           entry.part[key] = (entry.part[key] ?? '') + (delta[key] ?? '');
         }
       }
+      if (body(entry.part)) flush(current);
     }
     if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
       const id = event.message.id;
       const message = (id && messages.get(id)) || current || fresh();
       if (id) messages.set(id, message);
       event.message.content.forEach((part, index) => {
-        const entry = part.id ? [...message.blocks.values()].find(e => e.part.id === part.id) : message.blocks.get(index);
+        const entries = [...message.blocks.values()];
+        // The CLI snapshots blocks one at a time, so positions need not match stream indexes.
+        const entry = part.id ? entries.find(e => e.part.id === part.id)
+          : entries.find(e => e.shown && e.shown === body(part)) ?? message.blocks.get(index);
         if (entry) { entry.part = part; entry.json = ''; }
         else message.blocks.set(index, { part });
       });
@@ -162,8 +172,12 @@ function streamAgent(realm, model, context, options, deps) {
         block.thinking += delta;
         stream.push({ type: 'thinking_delta', contentIndex: 0, delta, partial: output });
       };
-      const claude = claudeActivity(think);
-      let finalText, failure, pendingNarration = '';
+      const append = text => {
+        output.content[0].thinking += text;
+        stream.push({ type: 'thinking_delta', contentIndex: 0, delta: text, partial: output });
+      };
+      const claude = claudeActivity(think, append);
+      let finalText, failure, narrating = false;
       for await (const line of createInterface({ input: child.stdout })) {
         if (!line.trim()) continue;
         let event;
@@ -172,9 +186,12 @@ function streamAgent(realm, model, context, options, deps) {
         await options.onProviderStreamEvent?.(event, model);
         if (realm === 'agy') {
           const step = event.step_update;
-          if (step?.step_type === 'agent_response' && step.text_delta) pendingNarration += step.text_delta;
+          if (step?.step_type === 'agent_response' && step.text_delta) {
+            if (narrating) append(step.text_delta);
+            else { const text = step.text_delta.trimStart(); think(text); narrating = Boolean(text); }
+          }
           if (step?.step_type === 'tool' && step.state === 'ACTIVE') {
-            think(pendingNarration.trim()); pendingNarration = '';
+            narrating = false;
             think(`→ ${summary(step.tool_name, step.tool_info?.parameters)}`);
           }
           if (step?.state === 'DONE' && step.usage) {
