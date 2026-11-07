@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" alt="bifrost logo" width="120" height="120"></p>
+
 # bifrost
 
 A fast, compiled Go CLI to route, dispatch, and isolate AI coding agents (`agy`, `opencode`, and native Claude Code) on your machine.
