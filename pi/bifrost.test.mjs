@@ -68,6 +68,7 @@ async function run(h, realm = 'claude', options = {}, messages = [{ role: 'user'
   const last = events.at(-1);
   return { events, last, message: last.message ?? last.error };
 }
+const say = text_delta => ({ step_update: { step_type: 'agent_response', text_delta } });
 const success = (result = 'Answer 🌈', usage) => ({ type: 'result', subtype: 'success', is_error: false, result, usage });
 
 test('registers agy/default, cached agy models and bifrost-claude/default, with no startup process', () => {
@@ -87,8 +88,7 @@ test('Claude final/usage and tool activity are text/thinking only; CLI defaults 
   assert.equal(last.type, 'done');
   assert.equal(message.stopReason, 'stop');
   assert.equal(message.content.find(b => b.type === 'text').text, 'Answer 🌈');
-  assert.match(message.content.find(b => b.type === 'thinking').thinking, /Read.*a.ts/);
-  assert.match(message.content[0].thinking, /Planning/);
+  assert.equal(message.content[0].thinking, '→ Read: a.ts\nPlanning');
   assert.ok(!events.some(e => e.type.startsWith('toolcall')));
   assert.deepEqual(message.usage, { input: 10, output: 4, cacheRead: 3, cacheWrite: 2, totalTokens: 19, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
   assert.deepEqual(h.calls[0].args, ['--json', '-r', 'claude', '-d', '/workspace', '--', 'task']);
@@ -121,11 +121,12 @@ test('Claude reconciles partial blocks with completed snapshots without duplicat
   ];
   const { message, events, last } = await run(harness({ lines }));
   assert.equal(last.type, 'done');
-  const expected = '→ Read: a.ts\nhello\nsnapshot-only thought\n→ Read: a.ts\nhello\n→ Read: b.ts';
-  assert.equal(message.content[0].thinking, expected);
-  assert.equal(events.filter(e => e.type === 'thinking_delta').map(e => e.delta).join(''), expected);
-  assert.deepEqual(message.content.filter(b => b.type === 'text'), [{ type: 'text', text: 'hello' }]);
-  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hello']);
+  assert.deepEqual(message.content, [
+    { type: 'thinking', thinking: '→ Read: a.ts' }, { type: 'text', text: 'hello' },
+    { type: 'thinking', thinking: 'snapshot-only thought\n→ Read: a.ts' }, { type: 'text', text: 'hello' },
+    { type: 'thinking', thinking: '→ Read: b.ts' },
+  ]);
+  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hel', 'lo', 'hello']);
 });
 test('Claude reconciles snapshots when the transport omits message_start', async () => {
   const { message, events, last } = await run(harness({ lines: [
@@ -136,8 +137,30 @@ test('Claude reconciles snapshots when the transport omits message_start', async
     success('hello'),
   ] }));
   assert.equal(last.type, 'done');
-  assert.equal(message.content[0].thinking, '→ Read: a.ts\nhello');
+  assert.deepEqual(message.content, [{ type: 'thinking', thinking: '→ Read: a.ts' }, { type: 'text', text: 'hello' }]);
   assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hello']);
+});
+test('Claude shows a tool once when the CLI snapshots each block of a started message', async () => {
+  // Observed from the real CLI: one assistant snapshot per finished block, before message_stop.
+  const partial = event => ({ type: 'stream_event', event });
+  const { message, last } = await run(harness({ lines: [
+    partial({ type: 'message_start', message: { id: 'm1' } }),
+    partial({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'thinking', thinking: '' }] } },
+    partial({ type: 'content_block_stop', index: 0 }),
+    partial({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: {} } }),
+    partial({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"command":"ls -la"}' } }),
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls -la' } }] } },
+    partial({ type: 'content_block_stop', index: 1 }),
+    partial({ type: 'message_stop' }),
+    partial({ type: 'message_start', message: { id: 'm2' } }),
+    partial({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+    partial({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done' } }),
+    { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'done' }] } },
+    success('done'),
+  ] }));
+  assert.equal(last.type, 'done');
+  assert.deepEqual(message.content, [{ type: 'thinking', thinking: '→ Bash: ls -la' }, { type: 'text', text: 'done' }]);
 });
 test('Claude preserves native non-stream content and partial-only tools and text', async () => {
   const lines = [
@@ -151,8 +174,10 @@ test('Claude preserves native non-stream content and partial-only tools and text
   ];
   const { message, last } = await run(harness({ lines }));
   assert.equal(last.type, 'done');
-  assert.equal(message.content[0].thinking, 'same\nsame\n→ Read: native.ts\n→ Read: partial.ts\nstart end');
-  assert.equal(message.content.at(-1).text, 'final');
+  assert.deepEqual(message.content, [
+    { type: 'text', text: 'same\n\nsame' }, { type: 'thinking', thinking: '→ Read: native.ts\n→ Read: partial.ts' },
+    { type: 'text', text: 'start end' },
+  ]);
 });
 test('Claude streams text and thinking live and holds tools until their input is complete', async () => {
   const partial = event => ({ type: 'stream_event', event });
@@ -173,9 +198,9 @@ test('Claude streams text and thinking live and holds tools until their input is
     success('hello'),
   ] }));
   assert.equal(last.type, 'done');
-  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['pl', 'an', '\nhel', 'lo', '\n→ Read: a.ts']);
-  assert.equal(message.content[0].thinking, 'plan\nhello\n→ Read: a.ts');
-  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hello']);
+  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['pl', 'an', '→ Read: a.ts']);
+  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hel', 'lo']);
+  assert.deepEqual(message.content, [{ type: 'thinking', thinking: 'plan' }, { type: 'text', text: 'hello' }, { type: 'thinking', thinking: '→ Read: a.ts' }]);
 });
 test('Claude keeps a tool before live text in order, without repeating text in later snapshots', async () => {
   const partial = event => ({ type: 'stream_event', event });
@@ -191,11 +216,10 @@ test('Claude keeps a tool before live text in order, without repeating text in l
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } },
     success('hello'),
   ] }));
-  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['→ Read: a.ts', '\nhel', 'lo']);
-  assert.equal(message.content[0].thinking, '→ Read: a.ts\nhello');
+  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hel', 'lo']);
+  assert.deepEqual(message.content, [{ type: 'thinking', thinking: '→ Read: a.ts' }, { type: 'text', text: 'hello' }]);
 });
-test('agy streams narration live around tools and still answers only from the result', async () => {
-  const say = text_delta => ({ step_update: { step_type: 'agent_response', text_delta } });
+test('agy streams answer text live as text blocks around tool thinking, without repeating the result', async () => {
   const { message, events, last } = await run(harness({ lines: [
     say('\n'), say('hel'), say('lo'),
     { step_update: { step_type: 'tool', state: 'ACTIVE', tool_name: 'read', tool_info: { parameters: { path: 'a' } } } },
@@ -203,8 +227,11 @@ test('agy streams narration live around tools and still answers only from the re
     { result: { status: 'SUCCESS', response: 'answer' } },
   ] }), 'agy');
   assert.equal(last.type, 'done');
-  assert.deepEqual(events.filter(e => e.type === 'thinking_delta').map(e => e.delta), ['hel', 'lo', '\n→ read: a', '\nbye']);
-  assert.equal(message.content.at(-1).text, 'answer');
+  assert.deepEqual(events.filter(e => e.type === 'text_delta').map(e => e.delta), ['hel', 'lo', 'bye']);
+  assert.deepEqual(message.content, [{ type: 'text', text: 'hello' }, { type: 'thinking', thinking: '→ read: a' }, { type: 'text', text: 'bye' }]);
+  // Blocks never overlap: each block ends before the next one starts.
+  const lifecycle = events.filter(e => /_(start|end)$/.test(e.type) && e.type !== 'start').map(e => `${e.type}:${e.contentIndex}`);
+  assert.deepEqual(lifecycle, ['text_start:0', 'text_end:0', 'thinking_start:1', 'thinking_end:1', 'text_start:2', 'text_end:2']);
 });
 test('system/subagent instructions survive dispatch without Pi tool declarations', async () => {
   const h = harness({ lines: [success()] });
@@ -232,9 +259,13 @@ test('payload replacement and native event instrumentation run before normalizat
   assert.deepEqual(h.calls[0].args, ['replacement']);
   assert.deepEqual(observed, ['result']); assert.equal(last.type, 'done');
 });
-test('empty successful native result is valid and does not use narration as final', async () => {
-  const h = harness({ lines: [{ type: 'assistant', message: { content: [{ type: 'text', text: 'not final' }] } }, success('')] });
-  assert.equal((await run(h)).message.content.find(b => b.type === 'text').text, '');
+test('empty successful native result is valid', async () => {
+  const h = harness({ lines: [success('')] });
+  assert.deepEqual((await run(h)).message.content, [{ type: 'text', text: '' }]);
+});
+test('agy result is the fallback only when no answer text streamed', async () => {
+  const { message } = await run(harness({ lines: [say('\n'), { result: { status: 'SUCCESS', response: 'answer' } }] }), 'agy');
+  assert.deepEqual(message.content, [{ type: 'text', text: 'answer' }]);
 });
 for (const [name, lines, code, error] of [
   ['missing result', [], 0, 'Missing claude result'],

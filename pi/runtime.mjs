@@ -54,9 +54,11 @@ function nativeUsage(usage, out) {
 }
 // Text and thinking stream as they arrive; tools wait for complete inputs, from their snapshot or a later block.
 // Message IDs scope block indexes; tool IDs identify tools within each message.
-function claudeActivity(think, append) {
+// emit(kind, text, continued): kind is 'text', 'thinking' or 'tool'; continued extends the same native block.
+function claudeActivity(emit) {
   const messages = new Map();
-  let current;
+  // started: current was opened by message_start, so snapshots (sent per block) do not end it.
+  let current, started = false;
   const fresh = () => ({ blocks: new Map() });
   const body = part => part.type === 'text' ? part.text : part.thinking;
   const flush = message => {
@@ -67,13 +69,13 @@ function claudeActivity(think, append) {
         if (entry.emitted) continue;
         let input = part.input;
         if (entry.json) { try { input = JSON.parse(entry.json); } catch { /* Retain native input on truncated JSON. */ } }
-        think(`→ ${summary(part.name, input)}`);
+        emit('tool', `→ ${summary(part.name, input)}`);
         entry.emitted = true;
       } else if (part.type === 'text' || part.type === 'thinking') {
         // Emit only what is new; a snapshot that disagrees with shown text cannot retract it.
         const text = body(part) ?? '', shown = entry.shown ?? '';
         if (text.length <= shown.length || !text.startsWith(shown)) continue;
-        (shown ? append : think)(text.slice(shown.length));
+        emit(part.type, text.slice(shown.length), Boolean(shown));
         entry.shown = text;
       }
     }
@@ -85,9 +87,10 @@ function claudeActivity(think, append) {
       const id = native.message?.id;
       current = (id && messages.get(id)) || fresh();
       if (id) messages.set(id, current);
+      started = true;
     }
     if (native?.type === 'content_block_start' || native?.type === 'content_block_delta') {
-      current ??= fresh();
+      if (!current) { current = fresh(); started = false; }
       const index = native.index ?? 0;
       let entry = current.blocks.get(index);
       if (!entry) {
@@ -118,7 +121,7 @@ function claudeActivity(think, append) {
       });
       flush(message);
       // Without message_start, the next partial belongs to a new message.
-      if (current === message) current = undefined;
+      if (current === message && !started) current = undefined;
     }
     if (event.type === 'result') { flush(current); current = undefined; }
   };
@@ -131,12 +134,34 @@ function streamAgent(realm, model, context, options, deps) {
     usage: { ...ZERO, totalTokens: 0, cost: { ...ZERO, total: 0 } },
   };
   (async () => {
-    let child, closed = false, thinkingOpen = false, aborted = false;
+    let child, closed = false, aborted = false;
     const abort = () => { if (!aborted && child && !closed) { aborted = true; child.kill('SIGTERM'); } };
-    const endThinking = () => {
-      if (!thinkingOpen) return;
-      thinkingOpen = false;
-      stream.push({ type: 'thinking_end', contentIndex: 0, content: output.content[0].thinking, partial: output });
+    // At most one block is open: answer text goes to text blocks, reasoning and tool activity to thinking blocks.
+    let open, streamedText = false;
+    const close = () => {
+      if (!open) return;
+      const { kind, index } = open; open = undefined;
+      stream.push({ type: `${kind}_end`, contentIndex: index, content: output.content[index][kind], partial: output });
+    };
+    const write = (kind, delta) => {
+      if (open?.kind !== kind) {
+        close();
+        output.content.push({ type: kind, [kind]: '' });
+        open = { kind, index: output.content.length - 1 };
+        stream.push({ type: `${kind}_start`, contentIndex: open.index, partial: output });
+      }
+      output.content[open.index][kind] += delta;
+      if (delta) stream.push({ type: `${kind}_delta`, contentIndex: open.index, delta, partial: output });
+    };
+    const emit = (kind, text, continued = false) => {
+      const block = kind === 'text' ? 'text' : 'thinking';
+      const fresh = open?.kind !== block;
+      // A new block drops leading blank lines; a new native part inside an open block is separated from the last.
+      if (fresh && !continued) text = text.replace(/^\s+/, '');
+      else if (!fresh && !continued) text = `${block === 'text' ? '\n\n' : '\n'}${text}`;
+      if (!text) return;
+      if (block === 'text') streamedText = true;
+      write(block, text);
     };
     try {
       if (options.signal?.aborted) throw new Error('Request was aborted');
@@ -164,19 +189,7 @@ function streamAgent(realm, model, context, options, deps) {
       if (options.signal?.aborted) abort();
       // CLI transport has no HTTP response; onResponse is intentionally not fabricated.
       stream.push({ type: 'start', partial: output });
-      output.content.push({ type: 'thinking', thinking: '' }); thinkingOpen = true;
-      stream.push({ type: 'thinking_start', contentIndex: 0, partial: output });
-      const think = text => {
-        if (!text) return;
-        const block = output.content[0]; const delta = `${block.thinking ? '\n' : ''}${text}`;
-        block.thinking += delta;
-        stream.push({ type: 'thinking_delta', contentIndex: 0, delta, partial: output });
-      };
-      const append = text => {
-        output.content[0].thinking += text;
-        stream.push({ type: 'thinking_delta', contentIndex: 0, delta: text, partial: output });
-      };
-      const claude = claudeActivity(think, append);
+      const claude = claudeActivity(emit);
       let finalText, failure, narrating = false;
       for await (const line of createInterface({ input: child.stdout })) {
         if (!line.trim()) continue;
@@ -187,12 +200,12 @@ function streamAgent(realm, model, context, options, deps) {
         if (realm === 'agy') {
           const step = event.step_update;
           if (step?.step_type === 'agent_response' && step.text_delta) {
-            if (narrating) append(step.text_delta);
-            else { const text = step.text_delta.trimStart(); think(text); narrating = Boolean(text); }
+            emit('text', step.text_delta, narrating);
+            narrating ||= Boolean(step.text_delta.trim());
           }
           if (step?.step_type === 'tool' && step.state === 'ACTIVE') {
             narrating = false;
-            think(`→ ${summary(step.tool_name, step.tool_info?.parameters)}`);
+            emit('tool', `→ ${summary(step.tool_name, step.tool_info?.parameters)}`);
           }
           if (step?.state === 'DONE' && step.usage) {
             output.usage.input += count(step.usage.input_tokens);
@@ -215,21 +228,17 @@ function streamAgent(realm, model, context, options, deps) {
         }
       }
       const exit = await exited;
-      endThinking();
+      close();
       if (options.signal?.aborted) throw new Error('Request was aborted');
       if (exit.error) throw exit.error;
       if (exit.code !== 0) throw new Error(`bifrost exited with code ${exit.code}${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
       if (failure) throw new Error(failure);
       if (finalText === undefined) throw new Error(`Missing ${realm} result`);
-      const index = output.content.length;
-      output.content.push({ type: 'text', text: '' });
-      stream.push({ type: 'text_start', contentIndex: index, partial: output });
-      output.content[index].text = finalText;
-      stream.push({ type: 'text_delta', contentIndex: index, delta: finalText, partial: output });
-      stream.push({ type: 'text_end', contentIndex: index, content: finalText, partial: output });
+      // The streamed text already is the answer; the native result only fills in when nothing streamed.
+      if (!streamedText) { write('text', finalText); close(); }
       output.stopReason = 'stop';
     } catch (error) {
-      abort(); endThinking();
+      abort(); close();
       output.stopReason = options.signal?.aborted ? 'aborted' : 'error';
       output.errorMessage = error instanceof Error ? error.message : String(error);
     } finally {

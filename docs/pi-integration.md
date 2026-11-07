@@ -4,7 +4,7 @@ Bifrost owns this Pi package. It adds `/bifrost` realm controls, keeps
 `agy/default`, and adds `bifrost-claude/default` for native Claude Code dispatch.
 These are **full-agent providers intended for delegated workers**, not ordinary
 chat models: native agents execute their own tools in the current directory.
-Pi receives tool activity as thinking, never executable Pi tool calls.
+Pi receives answer text as text and tool activity as thinking, never executable Pi tool calls.
 
 ## Load the extension
 
@@ -103,12 +103,20 @@ follow-ups replay text conversation into a fresh native dispatch. Pi tool
 schemas are not forwarded. Only text input is advertised; there is no native
 session-resume or image handoff.
 
-Native Claude `stream-json` tool/narration events become thinking. Text and thinking deltas (Claude and agy) stream live, and snapshots only add what the deltas did not deliver. Tool lines wait for their complete arguments: the assistant snapshot, the next block, next message, or terminal result. A final answer cannot be told from narration until `result`, so it shows live in thinking and then again as text. The terminal
-`result` supplies final text and usage (input, output, cache read/write); native
-errors, malformed JSON, missing/invalid final results, and **any nonzero or
-signal exit even after a success result** fail closed. Empty successful text is
-valid. Partial narration is not substituted for a final answer. agy retains its
-step-update tool/usage protocol with the same fail-closed completion boundary.
+Answer text from both realms (Claude text blocks, agy `agent_response` deltas)
+streams live into Pi **text** blocks; native reasoning and tool lines (`→ tool:
+argument`) stream into **thinking** blocks. At most one block is open at a time:
+switching between text and activity closes the open block, so a turn reads as
+text, activity, text in the order the agent produced it, and the answer is shown
+once. Snapshots only add what the deltas did not deliver; the Claude CLI sends one
+snapshot per finished block, which never closes a message opened by
+`message_start`. Tool lines wait for their complete arguments: the assistant
+snapshot, the next block, next message, or terminal result. The terminal `result`
+supplies usage (input, output, cache read/write) and is the answer text only when
+nothing streamed. Native errors, malformed JSON, missing/invalid final results,
+and **any nonzero or signal exit even after a success result** fail closed. Empty
+successful text is valid. agy retains its step-update tool/usage protocol with the
+same fail-closed completion boundary.
 Cancellation sends SIGTERM to the Bifrost child, whose CLI cancellation forwards
 to the native agent, and reports an aborted result.
 
