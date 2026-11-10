@@ -3,7 +3,6 @@ package realm
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 )
@@ -18,18 +17,7 @@ func (*ValhallaClaude) Name() string        { return "Valhalla (Claude Code)" }
 func (*ValhallaClaude) Description() string { return "Native Anthropic Claude Code CLI" }
 
 func (*ValhallaClaude) findBinary() string {
-	if p, err := exec.LookPath("claude"); err == nil {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	p := filepath.Join(home, ".local", "bin", "claude")
-	if info, err := os.Stat(p); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-		return p
-	}
-	return ""
+	return findBinary("claude", filepath.Join(".local", "bin", "claude"))
 }
 
 func (c *ValhallaClaude) IsAvailable(context.Context) (bool, string) {

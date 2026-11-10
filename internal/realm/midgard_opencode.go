@@ -3,7 +3,6 @@ package realm
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 )
@@ -27,20 +26,9 @@ func (m *MidgardOpenCode) Description() string {
 }
 
 func (m *MidgardOpenCode) findBinary() string {
-	if p, err := exec.LookPath("opencode"); err == nil {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	fallbacks := []string{
-		filepath.Join(home, ".opencode", "bin", "opencode"),
-		filepath.Join(home, ".local", "bin", "opencode"),
-	}
-	for _, fb := range fallbacks {
-		if info, err := os.Stat(fb); err == nil && !info.IsDir() {
-			return fb
-		}
-	}
-	return ""
+	return findBinary("opencode",
+		filepath.Join(".opencode", "bin", "opencode"),
+		filepath.Join(".local", "bin", "opencode"))
 }
 
 func (m *MidgardOpenCode) IsAvailable(ctx context.Context) (bool, string) {
