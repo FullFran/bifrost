@@ -1,13 +1,36 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync, mkdirSync, writeFileSync, accessSync, statSync, constants } from 'node:fs';
+import { homedir, userInfo } from 'node:os';
+import { join, delimiter } from 'node:path';
 
 const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const CACHE = join(homedir(), '.cache', 'gentle-shell', 'agy-models.json');
-const binary = () => process.env.BIFROST_BIN || 'bifrost';
+const defaultResolveDeps = {
+  isExecutable(path) {
+    try { accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; }
+  },
+  // HOME may be redirected by a sandboxing host; the account's home is where `make install` put bifrost.
+  realHome: () => userInfo().homedir,
+};
+// Resolve bifrost without trusting PATH alone: hosts like Gentle Shell run Pi with a sanitized env.
+export function resolveBinary(env = process.env, deps = defaultResolveDeps) {
+  if (env.BIFROST_BIN) return env.BIFROST_BIN;
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (dir && deps.isExecutable(join(dir, 'bifrost'))) return join(dir, 'bifrost');
+  }
+  let home;
+  try { home = deps.realHome(); } catch { home = undefined; }
+  const installed = home && join(home, '.local', 'bin', 'bifrost');
+  return installed && deps.isExecutable(installed) ? installed : 'bifrost';
+}
+const binary = () => resolveBinary();
+const NOT_FOUND_HINT = 'bifrost not found on PATH or in ~/.local/bin; set BIFROST_BIN';
+const errorText = error => {
+  const text = error instanceof Error ? error.message : String(error);
+  return error?.code === 'ENOENT' ? `${text} (${NOT_FOUND_HINT})` : text;
+};
 const exec = promisify(execFile);
 function cleanModels(models) {
   const seen = new Set(['default']);
@@ -240,7 +263,7 @@ function streamAgent(realm, model, context, options, deps) {
     } catch (error) {
       abort(); close();
       output.stopReason = options.signal?.aborted ? 'aborted' : 'error';
-      output.errorMessage = error instanceof Error ? error.message : String(error);
+      output.errorMessage = errorText(error);
     } finally {
       options.signal?.removeEventListener('abort', abort);
       output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -292,7 +315,7 @@ export function registerBifrost(pi, injected) {
           await call(['config', 'set', policy.realm, key, String(!policy[key])]);
           ctx.ui.notify(`${policy.realm} ${key} = ${!policy[key]}`, 'info');
         }
-      } catch (error) { ctx.ui.notify(`Bifrost: ${error.message}`, 'error'); }
+      } catch (error) { ctx.ui.notify(`Bifrost: ${errorText(error)}`, 'error'); }
     },
   });
 }

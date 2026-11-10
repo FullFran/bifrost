@@ -14,6 +14,13 @@ Prerequisites: Node 24+, a Pi host providing `@earendil-works/pi-ai` and
 Install and authenticate the native agent CLIs separately. The extension neither
 reads nor manages credentials. `BIFROST_BIN` can select a different Bifrost binary.
 
+The extension finds the binary in this order: `BIFROST_BIN` when set, the first
+executable `bifrost` on `PATH`, then `~/.local/bin/bifrost` (the `make install`
+default) in the account's real home, even when `HOME` is redirected. Hosts that
+sanitize the environment, such as Gentle Shell, rely on that last step. If the
+binary lives anywhere else, set `BIFROST_BIN`; a missing binary reports
+`bifrost not found on PATH or in ~/.local/bin; set BIFROST_BIN`.
+
 Try the package from the Bifrost checkout without changing settings:
 
 ```sh

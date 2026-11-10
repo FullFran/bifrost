@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { registerBifrost } from './runtime.mjs';
+import { registerBifrost, resolveBinary } from './runtime.mjs';
 
 // Implements the public stream surface without loading or installing the Pi host.
 function createStream() {
@@ -15,7 +15,7 @@ function createStream() {
     async *[Symbol.asyncIterator]() { await complete; yield* events; },
   };
 }
-function harness({ lines = [], code = 0, spawnError, hang = false, execError, failSet = false, systemPromptFn, config = { realms: { agy: {}, claude: { enabled: false, auto: true }, opencode: {} } } } = {}) {
+function harness({ lines = [], code = 0, spawnError, hang = false, execError, errorCode, failSet = false, systemPromptFn, config = { realms: { agy: {}, claude: { enabled: false, auto: true }, opencode: {} } } } = {}) {
   const providers = new Map(), commands = new Map(), hooks = new Map(), calls = [], children = [];
   const pi = {
     registerProvider(name, value) { providers.set(name, value); },
@@ -30,7 +30,7 @@ function harness({ lines = [], code = 0, spawnError, hang = false, execError, fa
     refreshModels: async () => {}, cwd: () => '/workspace',
     exec: async (binary, args, options) => {
       calls.push({ binary, args, options });
-      if (execError) throw new Error(execError);
+      if (execError) throw Object.assign(new Error(execError), errorCode ? { code: errorCode } : {});
       if (failSet && args[1] === 'set') throw new Error('write denied');
       return { stdout: JSON.stringify(config), stderr: '' };
     },
@@ -46,7 +46,7 @@ function harness({ lines = [], code = 0, spawnError, hang = false, execError, fa
       };
       children.push(child);
       setImmediate(() => {
-        if (spawnError) { child.emit('error', new Error('ENOENT')); child.stdout.end(); return; }
+        if (spawnError) { child.emit('error', Object.assign(new Error(errorCode ? 'spawn bifrost ENOENT' : 'ENOENT'), errorCode ? { code: errorCode } : {})); child.stdout.end(); return; }
         if (hang) return;
         const data = lines.map(line => typeof line === 'string' ? line : JSON.stringify(line)).join('\n');
         // Split UTF-8 across chunks to exercise readline decoding.
@@ -284,6 +284,34 @@ for (const [name, lines, code, error] of [
 for (const spawnError of ['sync', 'async']) test(`spawn ${spawnError} failure terminates`, async () => {
   assert.equal((await run(harness({ spawnError }))).last.type, 'error');
 });
+const HINT = 'bifrost not found on PATH or in ~/.local/bin; set BIFROST_BIN';
+test('spawn ENOENT appends the install hint to the original error', async () => {
+  const { message } = await run(harness({ spawnError: 'async', errorCode: 'ENOENT' }), 'agy');
+  assert.equal(message.stopReason, 'error');
+  assert.ok(message.errorMessage.startsWith('spawn bifrost ENOENT'));
+  assert.ok(message.errorMessage.includes(HINT));
+});
+test('spawn errors without ENOENT code keep their text unchanged', async () => {
+  const { message } = await run(harness({ spawnError: 'async' }), 'agy');
+  assert.equal(message.errorMessage, 'ENOENT');
+});
+function resolveDeps(executables) {
+  const set = new Set(executables);
+  return { isExecutable: p => set.has(p), realHome: () => '/real' };
+}
+test('resolveBinary prefers a non-empty BIFROST_BIN', () => {
+  assert.equal(resolveBinary({ BIFROST_BIN: '/custom/bifrost', PATH: '/a' }, resolveDeps(['/a/bifrost', '/real/.local/bin/bifrost'])), '/custom/bifrost');
+  assert.equal(resolveBinary({ BIFROST_BIN: '', PATH: '/a' }, resolveDeps(['/a/bifrost'])), '/a/bifrost');
+});
+test('resolveBinary returns the first executable bifrost on PATH', () => {
+  assert.equal(resolveBinary({ PATH: '/none::/b:/c' }, resolveDeps(['/b/bifrost', '/c/bifrost', '/real/.local/bin/bifrost'])), '/b/bifrost');
+});
+test('resolveBinary falls back to the real home, not HOME', () => {
+  assert.equal(resolveBinary({ PATH: '/usr/bin:/bin', HOME: '/fake' }, resolveDeps(['/real/.local/bin/bifrost', '/fake/.local/bin/bifrost'])), '/real/.local/bin/bifrost');
+});
+test('resolveBinary returns bare bifrost when nothing is found', () => {
+  assert.equal(resolveBinary({ HOME: '/fake' }, resolveDeps([])), 'bifrost');
+});
 test('cancellation before dispatch spawns nothing', async () => {
   const h = harness(); const abort = new AbortController(); abort.abort();
   assert.equal((await run(h, 'claude', { signal: abort.signal })).message.stopReason, 'aborted');
@@ -314,6 +342,14 @@ test('agy/default still delegates defaults and fails closed on nonzero after res
   assert.deepEqual(h.calls[0].args, ['--json', '-r', 'agy', '-d', '/workspace', '--', 'task']);
   assert.equal(message.stopReason, 'error');
   assert.equal(message.errorMessage, 'bifrost exited with code 2');
+});
+test('/bifrost ENOENT notification appends the install hint; other errors stay unchanged', async () => {
+  const view = ui([]);
+  await harness({ execError: 'spawn bifrost ENOENT', errorCode: 'ENOENT' }).commands.get('bifrost').handler('', { cwd: '/p', hasUI: true, ui: view });
+  assert.deepEqual(view.notices, [{ text: `Bifrost: spawn bifrost ENOENT (${HINT})`, level: 'error' }]);
+  const plain = ui([]);
+  await harness({ execError: 'config failed' }).commands.get('bifrost').handler('', { cwd: '/p', hasUI: true, ui: plain });
+  assert.deepEqual(plain.notices, [{ text: 'Bifrost: config failed', level: 'error' }]);
 });
 function ui(choices) {
   const shown = [], notices = [];
