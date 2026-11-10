@@ -14,6 +14,7 @@ func TestClaudeCommand(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", home)
+	realm.SetRealHomeForTest(t, home)
 	bin := filepath.Join(home, ".local", "bin", "claude")
 	if err := os.MkdirAll(filepath.Dir(bin), 0755); err != nil {
 		t.Fatal(err)

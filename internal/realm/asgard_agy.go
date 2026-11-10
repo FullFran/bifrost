@@ -3,7 +3,6 @@ package realm
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -32,15 +31,7 @@ func (a *AsgardAgy) Description() string {
 }
 
 func (a *AsgardAgy) findBinary() string {
-	if p, err := exec.LookPath("agy"); err == nil {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	fallback := filepath.Join(home, ".local", "bin", "agy")
-	if info, err := os.Stat(fallback); err == nil && !info.IsDir() {
-		return fallback
-	}
-	return ""
+	return findBinary("agy", filepath.Join(".local", "bin", "agy"))
 }
 
 func (a *AsgardAgy) IsAvailable(ctx context.Context) (bool, string) {

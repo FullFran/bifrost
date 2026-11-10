@@ -32,6 +32,8 @@ func init() {
 
 ## 2. Supported Realms
 
+> **Binary lookup**: each realm looks for its CLI on `$PATH` first. In the fallback paths below, `~` is the account's home from the user database, then `HOME` when it differs, because hosts like Gentle Shell redirect `HOME` and trim `PATH`. A fallback only counts if it is an executable regular file (symlinks are followed).
+
 ### 2.1. Asgard (`agy`) — Google Antigravity
 - **ID**: `agy`
 - **Binary**: Looks for `agy` in `$PATH` or falls back to `~/.local/bin/agy`.
@@ -55,7 +57,7 @@ func init() {
 
 ### 2.2. Midgard (`opencode`) — OpenCode CLI
 - **ID**: `opencode`
-- **Binary**: Looks for `opencode` in `$PATH` or `~/.local/bin/opencode`.
+- **Binary**: Looks for `opencode` in `$PATH`, then `~/.opencode/bin/opencode`, then `~/.local/bin/opencode`.
 - **Capabilities**: Local weights, open-source models, Ollama/vLLM backends, custom provider endpoints.
 - **Flags Injected**:
   - `run --auto`: Unattended autonomous mode.
